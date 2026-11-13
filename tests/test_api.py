@@ -201,3 +201,14 @@ def test_state_survives_restart_and_reset(tmp_path, hooks):
     s3 = c2.get("/state", headers=H).json()
     assert next(t for t in s3["tasks"] if t["id"] == "T6-PLUMB-RI")["forecast_finish"] is None
     assert c2.get("/events", headers=H).json() == []
+
+
+def test_same_delay_reported_again_does_not_notify_again(client, hooks):
+    ms = {m["id"]: m for m in gold_messages()}
+    first = client.post("/updates", json=body(ms["demo:02"]), headers=H).json()
+    assert first["actions"]
+    again = body(ms["demo:02"])
+    again["updates"][0]["message_id"] = "demo:02-repeat"   # a new message with the same news
+    r = client.post("/updates", json=again, headers=H).json()
+    assert r["status"] == "applied" and r["discrepancies"] == [] and r["actions"] == []
+    assert len(hooks) == 1

@@ -326,14 +326,21 @@ In n8n, call `<that URL>/context` and `<that URL>/updates` with the header `X-Kr
 | Folder | Content |
 |---|---|
 | `docs/api.md` | The HTTP contract between n8n and the local service |
-| `docs/00-overview` | Problem, product, demo story |
-| `docs/01-architecture` … `docs/07-deployment-demo` | Written before the n8n pivot: where they say "n8n is only glue" or describe Python-side Telegram, this README wins |
+| `docs/n8n-workflow.md` | The n8n workflow, node by node (for the n8n owner) |
+| `docs/00-overview` | Problem, product, demo story; `open-questions.md` lists what still needs a decision |
+| `docs/01-architecture` | Three blocks, data flow, determinism rule, contracts, interfaces |
+| `docs/02-ingestion` | Plan import (stretch, not built) |
+| `docs/03-integrations` | Channels: Telegram via n8n |
+| `docs/04-graph` | Forecast, discrepancy rules, events (what is built vs planned) |
+| `docs/05-engine` | Interpretation (n8n LLM node) and the `/updates` pipeline, evaluation plan |
+| `docs/06-resolution-policy` | Who gets told what |
+| `docs/07-deployment-demo` | Running the service, tunnel, security, UI, demo checklist, submission |
 
 ## Results
 
 | Metric | Value |
 |---|---|
-| Unit/API tests | 17 passing (includes a replay of all 10 gold demo messages) |
+| Unit/API tests | 19 passing (includes a replay of all 10 gold demo messages) |
 | Detected discrepancies vs gold labels | 10 / 10 messages match |
 | LLM task mapping accuracy, update-kind accuracy, wrong-and-confident rate | TBD (n8n LLM step not measured yet) |
 | Message → notification latency | TBD |

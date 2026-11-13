@@ -27,12 +27,14 @@ Cost (cite these in the pitch):
 
 ## What it does (MVP)
 
-1. **Plan → graph.** Tasks, dependencies, people, locations from CSV/JSON (MS Project/P6 import as stretch).
-2. **Chat → updates.** Telegram (live) + WhatsApp/email (as available). Sender resolved from the persons list.
-3. **Interpret.** The engine maps each message to a task and an update kind (started / completed / delayed / blocked / modified / question), with confidence. Unsure → asks back.
-4. **Detect.** The graph recomputes dates (CPM) and raises discrepancies: delay with downstream impact, out-of-sequence work, hold-point violation, scope change, conflicting reports, silent overdue.
-5. **Resolve.** The policy decides who needs to know and what to ask; integrations send it.
-6. **Log & show.** Every change is an event; the UI shows the graph, the critical path, and the discrepancy feed.
+Architecture in one line: **Telegram → n8n (LLM reads the message) → local service (graph checks it) → n8n → Telegram.** See `01-architecture`.
+
+1. **Plan → graph.** Tasks, dependencies, people, locations from `data/demo/plan.json` (CSV/MS Project/P6 import is a stretch, `02-ingestion`).
+2. **Chat → claims.** Telegram message arrives in n8n; the sender is identified by full name; the local service returns the sender's candidate tasks; n8n's LLM node turns the message into claims (task, kind, new date, confidence). Unsure → the sender is asked instead.
+3. **Detect.** The local service applies each claim, recomputes dates (forward pass) and raises discrepancies: delay with downstream impact, out-of-sequence work, hold-point violation, scope change, blocked. (Contradicting reports and overdue-without-report are planned.)
+4. **Resolve.** The policy decides who needs to know and what to ask; the response lists ready-to-send messages.
+5. **Notify.** n8n sends those messages on Telegram.
+6. **Log & show.** Every change is an event in an append-only log; the UI shows the graph, forecast dates and the discrepancy feed (`GET /state`, `GET /events`).
 
 ## Demo story (data in `data/demo/`)
 
@@ -50,11 +52,11 @@ Closing line: *"Nobody changed how they work. The schedule just stopped lying."*
 
 | Talona "what wins" | KraftSync |
 |---|---|
-| Connect to what the site already uses | Lives in the chat groups crews already use; imports existing schedules |
-| One live record of what changed and who decided | Append-only event log; every graph change has a source message and actor |
+| Connect to what the site already uses | Lives in the Telegram group crews already use (n8n in between); plan imports are a stretch |
+| One live record of what changed and who decided | Append-only event log (`events.jsonl`); every change has a source message and actor |
 | Flag issues as they happen | Discrepancies raised on the message that causes them |
 | Decisions go to the superintendent | Policy escalates decisions to the site manager; FYIs go to affected trades |
 
 ## Explicitly out of scope
 
-Cost/billing calculation, resource levelling, BIM, full working-day calendars, photo understanding (stretch only), mobile app.
+Cost/billing calculation, resource levelling, BIM, full working-day calendars, photo understanding (stretch only), mobile app, WhatsApp/email channels (later, via n8n), real authentication of chat senders.

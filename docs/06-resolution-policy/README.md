@@ -1,42 +1,55 @@
 # 06 · Resolution policy
 
-Goal: decide **who needs to know what** for each discrepancy. Deterministic, configured in `kraftsync/policy/policy.yaml`.
+**Status: v0 built** in `kraftsync/engine/resolve.py` (code) with texts and one setting in `kraftsync/policy/policy.yaml`. Deterministic: discrepancies in, ready-to-send `Action`s out. n8n only delivers them.
+
+Goal: decide **who needs to know what** for each discrepancy.
 
 ## Why not "text the responsible person"
 
 The responsible person of the changed task is usually the one who just reported it. Telling them again is noise. The value is telling the **people whose work moves** and asking the **site manager only for decisions**.
 
-## Rules (MVP)
+## Rules
 
-| Discrepancy | Who | What | Kind |
-|---|---|---|---|
-| `delay` | responsible persons of the **next affected tasks** (first 1–2 levels downstream, deduplicated) | "Your task X moves from <old> to <new> because <cause>." | notify |
-| `delay` (critical path / project finish moves) | + site manager | "Handover moves <old> → <new>. Cause: … Options: accept / accelerate / resequence." | escalate |
-| `hold_point_violation` | site manager + inspector + sender | "STOP: <task> started before <inspection> passed. Confirm stop or document exception." | escalate |
-| `out_of_sequence` (no hold point) | sender + responsible of the unfinished predecessor | "You started X but Y isn't done — is Y actually done?" | ask |
-| `blocked` | site manager (+ supplier/person named in blocker if known) | "X blocked: <blocker>. Downstream impact: …" | escalate |
-| `scope_change` | site manager | "Change requested on X: <description>, by <who>. Approve as change order?" | escalate |
-| `conflicting_reports` | both reporters | "You reported A, <other> reported B — which is right?" | ask |
-| `silent_overdue` | responsible person | "X was due <date>. Done, or new date?" | ask |
-| low-confidence interpretation | sender | "Which task do you mean: (1) … (2) …?" | ask |
+| Discrepancy | Who | What | Kind | Built |
+|---|---|---|---|---|
+| `delay` | responsible persons of the affected tasks within `downstream_levels_to_notify` (2) steps downstream; each person once, with the dates of their closest affected task; never the sender or the site manager | "Your task X moves from <old> to <new>. Cause: …" | notify | yes |
+| `delay` where the **project finish moves** | all site managers | "Milestone '…' moves <old> → <new> (+N days). Cause: … Decision needed." | escalate | yes |
+| `hold_point_violation` | all site managers + all inspectors; the sender is asked | "STOP: <task> started before <inspection> passed. Please confirm." | escalate / ask | yes |
+| `out_of_sequence` | the sender + responsible persons of the unfinished predecessors | "<task> was started while still open: <predecessors>. Is that right?" | ask | yes |
+| `blocked` | all site managers | "<task> is blocked: <blocker>. Decision needed." | escalate | yes |
+| `scope_change` | all site managers | "Change requested on <task>: <description> (by <who>). Approve as change order?" | escalate | yes |
+| low-confidence / no task | the sender (up to 5 options) | "Which task do you mean? …" | ask | yes |
+| `conflicting_reports` | both reporters | "You reported A, <other> reported B — which is right?" | ask | planned |
+| `silent_overdue` | responsible person (site manager after 48 h) | "X was due <date>. Done, or new date?" (template exists) | ask | planned |
+
+`escalate` and `ask` actions have `reply_expected = true`; `notify` does not.
 
 ## Guards
 
-- **Dedup / rate limit:** one message per person per task per discrepancy type per 2 h. Batch multiple notices to the same person into one message.
-- **Quiet hours:** 20:00–06:30, except `critical`.
-- **Language:** use `Person.language`; templates in de + en.
-- **Everything is logged** as `action_sent` events with the full text.
-- Text: template first; LLM rewording optional and only cosmetic (must keep all dates/ids from the template).
+- **One action per person per claim.** If a person qualifies for several (e.g. the inspector for a hold-point escalation and an out-of-sequence question), the most urgent wins: `escalate` > `ask` > `notify`. Re-reporting the same news produces no new discrepancy and therefore no new messages (`tests/test_api.py::test_same_delay_reported_again_does_not_notify_again`).
+- **Language:** `Person.language`, templates in de + en (falls back to de).
+- **Stage mode:** with `DEMO_REDIRECT_CHAT_ID` every action goes to one chat, prefixed `[an <name>]`.
+- Text is template-only; LLM rewording is optional and not built (it must keep all dates/ids from the template).
+- **Not built:** the 2 h dedup window and batching across messages, quiet hours (20:00–06:30 except critical), `action_sent` events (the service does not know whether n8n delivered).
+
+## What `policy.yaml` actually does today
+
+Read by the code: `templates` (de/en) and `downstream_levels_to_notify`. **Not read:** the `rules:` block, `confidence_min` (the service uses the env var `CONFIDENCE_MIN`), `quiet_hours`, `dedup_window_hours`. The `rules:` block documents intent; the table above is what `resolve.py` does. If you change who gets told, change the code and this table; if you only change wording, edit the templates.
+
+Template keys: `delay_notify`, `delay_escalate`, `hold_point`, `scope_change`, `clarify`, `silent_overdue`, `out_of_sequence`, `blocked`.
 
 ## Interface
 
 ```python
-def resolve(d: Discrepancy, graph: ProjectGraph) -> list[Action]
-def ask_clarification(msg: InboundMessage, update: TaskUpdate, graph: ProjectGraph) -> Action
+# kraftsync/engine/resolve.py
+resolve_all(discrepancies, before, after, deps, persons, update, sender, now) -> list[Action]
+ask_clarification(sender: Person, options: list[Task], message_id: str, now) -> Action
 ```
+`Action.id` is `<discrepancy id>:<person id>` (deterministic). The API attaches `recipients` (name + Telegram chat id) so n8n can send without another lookup.
 
 ## Done when
 
-- Demo message 2 → actions to drywall foreman + inspector (notify) and site manager (escalate, handover moved).
-- Demo message 5 → escalate to site manager + inspector, ask sender.
-- No duplicate messages when the same delay is reported twice.
+- Demo message 02 → notify drywaller + inspector, escalate to the site manager (handover moved), nothing for the plumber → `test_ripple_notifies_affected_trades_and_escalates`. ✅
+- Demo message 05 → escalate to site manager + inspector, ask the sender, one message each → `test_hold_point_violation_escalates_immediately`. ✅
+- No duplicate messages when the same delay is reported twice. ✅
+- Quiet hours, batching, `conflicting_reports` / `silent_overdue` messages. ⬜

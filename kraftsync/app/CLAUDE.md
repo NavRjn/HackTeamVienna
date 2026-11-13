@@ -1,8 +1,8 @@
 # app — local rules
-Read `docs/07-deployment-demo/README.md` first.
-- FastAPI. Read-only views over graph state + event log, plus `POST /messages` and `POST /reset` (demo).
-- UI must be legible on a projector: big fonts, status colours, critical path obvious, handover date always visible.
-- The manual message box is the stage fallback — it must always work, even if Telegram is down.
-- Keep the API contract in the doc stable; if you change it, update the doc in the same commit.
-- Start only via `python -m kraftsync.app.serve` (token check, random port, no docs). The HTTP contract is `docs/api.md`.
-- Never log tokens, sender refs or message text. `/context` is POST on purpose.
+Read `docs/api.md` (the contract) and `docs/07-deployment-demo/README.md` first.
+- FastAPI service for n8n and the UI. Routes: `/health`, `POST /context`, `POST /updates`, `GET /state`, `GET /events`, `POST /reset`. Keep `docs/api.md` true: if you change a route or shape, update it in the same commit and tell the n8n owner.
+- Start only via `python -m kraftsync.app.serve` (token check, random port, no docs, no access log). `create_app()` refuses to run without a strong token.
+- Never log tokens, names or message text. `/context` is a POST on purpose.
+- `state.py` is a placeholder for the `graph/` package; `api_models.py` holds the HTTP envelopes so domain-model refactors don't change the wire format by accident.
+- UI must be legible on a projector: big fonts, status colours, forecast/handover date always visible. It only needs `GET /state` and `GET /events`.
+- Stage fallback: `POST /updates` (or the n8n Manual Trigger) must work even if Telegram is down.

@@ -1,42 +1,39 @@
-# 03 · Integrations
+# 03 · Channels (Telegram via n8n)
 
-Goal: channel-specific I/O ↔ channel-agnostic `InboundMessage` / `Action`. No business logic here.
+**Status: the Python `integrations/` package is not used.** Channel I/O is done by n8n; the local service never talks to Telegram. This doc says what that means in practice. The workflow itself is in [`docs/n8n-workflow.md`](../n8n-workflow.md); the HTTP contract is [`docs/api.md`](../api.md).
 
 ## Channels
 
-| Channel | Inbound | Outbound | Hackathon reality |
+| Channel | Inbound | Outbound | Status |
 |---|---|---|---|
-| **Telegram** | Bot in the site group (privacy mode **off** via BotFather so it sees all messages) or DMs | `sendMessage` to `telegram_chat_id` | Primary live demo channel. Works in minutes. |
-| **WhatsApp** | (a) Chat export `.zip` (txt + media) → replay; (b) WhatsApp Business Cloud API webhook (Meta test number) | Cloud API send (template rules apply outside 24h window) | Export import is reliable and shows "works with your existing groups". Cloud API = stretch. |
-| **Email** | IMAP poll or n8n Gmail trigger → webhook | SMTP / n8n | Good for inspector/ÖBA formal messages. |
-| **Manual** | `POST /messages` from the UI | shown in UI | Always available fallback for the demo. |
+| **Telegram** | n8n *Telegram Trigger* on the site group (bot privacy mode **off** so it sees all messages) | n8n *Telegram Send Message* to `recipients[person].telegram_chat_id` | Primary demo channel |
+| **WhatsApp** | n8n WhatsApp Business Cloud trigger, or a chat export replayed into the same flow | n8n send node (template rules apply outside the 24 h window) | Later |
+| **Email** | n8n Gmail/IMAP trigger | n8n Gmail/SMTP send | Later; good for inspector/ÖBA formal messages |
+| **Manual** | n8n Manual Trigger feeding `data/demo/messages.jsonl`; or a direct `POST /updates` | — | Test path and stage fallback |
 
-n8n (credits available) is allowed as glue for email/WhatsApp: n8n receives → `POST /messages` on our API. Telegram stays in Python for reliability.
+Every channel joins the same flow: normalise to `sender_name` (full name), `received_at`, `text`, a unique id → `POST /context` → LLM → `POST /updates`. Adding a channel = adding a trigger and a send node in n8n; the local service does not change.
 
-## Responsibilities
+## Who does what
 
-1. Normalise every inbound message to `InboundMessage` (unique `id` per channel, tz-aware `received_at`, attachments downloaded to `data/media/`).
-2. **Sender resolution** — deterministic: phone (E.164) / telegram handle or chat id / email → `Person.id`. Unknown → `sender_person_id=None` (engine still sees it).
-3. Hand off to the pipeline: `pipeline.handle(msg)` (engine owns the pipeline).
-4. Deliver `Action`s on the person's channel; record status (`sent`/`failed`); never crash the pipeline on a send failure.
-5. Replies: keep `reply_to_id` so the engine can match answers to its clarification questions.
+| Responsibility | Where |
+|---|---|
+| Receive/send channel messages, download media | n8n |
+| Normalise to `sender_name`, `received_at`, `text`, `base_id` (`tg:<chat>:<msg>`) | n8n (Normalize node) |
+| **Sender resolution** | local service, by **full name only** (case/accent/space-insensitive; Telegram `first_name` + `last_name`). Unknown name → `person: null` → claim is `ignored: unknown sender`. Names are not authentication: fine for synthetic demo names, bind ids for real use |
+| Message idempotency | `message_id` per claim (`<base_id>#1`, `#2`, ...); the service answers `duplicate` on a repeat |
+| Choosing the chat to send to | the service returns `recipients[person_id].telegram_chat_id`; n8n sends |
+| Telling the right people | local service (`engine/resolve.py` + `policy.yaml`) |
 
 ## Demo-safety switches
 
-- `DRY_RUN=1` → actions are printed/logged, not sent.
-- `DEMO_REDIRECT_CHAT_ID` → all outbound goes to one chat (the presenter's phone), prefixed with the intended recipient's name. Use this on stage.
+- `DEMO_REDIRECT_CHAT_ID` (local `.env`): every recipient's chat id becomes this chat and each text is prefixed `[an <name>]`. Use it on stage, and for the skeleton before per-person chat ids exist. **Implemented.**
+- `DRY_RUN`: **not implemented** (n8n decides whether to send; disable the Send node to dry-run).
+- `DEMO_TODAY` (local `.env`): freezes "today" for candidate selection, date sanity checks and the LLM prompt (it is returned by `/context`).
 
-## Interface
+## For the demo phones
 
-```python
-def resolve_sender(sender_ref: str, persons: list[Person]) -> str | None
-def parse_whatsapp_export(zip_path: Path, persons: list[Person]) -> list[InboundMessage]
-async def send(action: Action, persons: list[Person]) -> Action
-```
-CLI: `uv run python -m kraftsync.integrations.telegram_bot`
+Each phone's Telegram first and last name must equal a person's `name` in `data/demo/persons.csv` (or use test accounts named like them), and each person's `telegram_chat_id` should be filled in unless redirect mode is on.
 
-## Done when
+## Stretch (Python side, only if needed)
 
-- A message typed in the Telegram group appears as an `InboundMessage` with the right `sender_person_id`.
-- An `Action` reaches the right Telegram chat (or the redirect chat).
-- A WhatsApp export zip replays through the pipeline.
+`kraftsync/integrations/` could hold `parse_whatsapp_export(zip) -> list[InboundMessage]` for replaying an exported chat. `InboundMessage` exists in the contracts for that purpose but the live flow does not use it.

@@ -7,62 +7,72 @@ Hackathon project · Building Better Worlds, Vienna · Track 01 / Talona "Contex
 
 A construction schedule as a **live dependency graph**. Crews keep texting the site chat like they do today. KraftSync reads each message, maps it to a task in the graph, updates the graph, detects what that breaks downstream (delay, out-of-sequence work, hold-point violation, scope change), and tells **the people whose work is affected** — not just the sender.
 
+**Architecture: Telegram → n8n Cloud (LLM reads the message) → local FastAPI service (graph checks it) → n8n → Telegram.** n8n owns chat I/O and the one AI step; the local service owns state, dates, detection and routing, and calls no LLM. The two talk over an https tunnel with a shared token.
+
 Read before doing anything non-trivial:
+- `README.md` — the picture (diagrams), the flow, ownership
 - `docs/00-overview/` — problem, product, demo story
 - `docs/01-architecture/` — data flow, contracts, ontology, the determinism rule
+- `docs/api.md` — the HTTP contract between n8n and the service (frozen; change only with everyone's OK)
+- `docs/n8n-workflow.md` — what the n8n workflow does, node by node
 - the doc folder for the module you are touching (`docs/02-…` to `docs/07-…`)
 
 ## The one rule: AI interprets, the graph decides
 
-- The **only** non-deterministic step is the engine's interpretation: `InboundMessage → TaskUpdate` (+ drafting outbound text).
-- Everything else is deterministic, unit-tested Python: graph state, CPM dates, discrepancy detection, resolution policy, routing.
-- A `TaskUpdate` below the confidence threshold is **never applied**; the engine asks the sender instead.
-- Never let an LLM invent task ids, person ids, dates or dependencies. It may only choose from candidates we give it.
+- The **only** non-deterministic step is the interpretation in n8n's LLM node: chat message → `TaskUpdate` claims (one claim about one task). There is no LLM call in this repo's Python.
+- Everything else is deterministic, unit-tested Python: sender lookup, candidate shortlist, graph state, forecast dates, discrepancy detection, resolution policy, routing.
+- A claim below `CONFIDENCE_MIN` (or without a task) is **never applied**; the service asks the sender instead.
+- Never let an LLM invent task ids, person ids, dates or dependencies. It may only choose from the candidates `POST /context` returns; the service rejects unknown ids.
+- Don't make the LLM send a graph fragment or decide "is this a conflict" — it sends claims, the graph decides.
 
 ## Layout
 
 ```
 kraftsync/
-  contracts/      Pydantic models shared by everyone (models.py)   ← the contract
-  ingestion/      CSV / PDF / MS Project / P6 → ProjectPlan
-  integrations/   Telegram / WhatsApp / email ↔ InboundMessage / Action
-  graph/          dependency graph, CPM, event store, discrepancy detection
-  engine/         message interpretation (LLM), orchestration loop
-  policy/         resolution policy: Discrepancy → Actions (deterministic, YAML-driven)
-  app/            API + visualisation
+  contracts/      Pydantic domain models shared by everyone (models.py)   ← the contract
+  app/            local FastAPI service: api.py (routes), api_models.py (HTTP envelopes), settings.py,
+                  state.py (plan + events.jsonl; placeholder for graph/), serve.py (the only entry point)
+  engine/         check.py (forecast + discrepancy detection), resolve.py (who gets told) — deterministic, no LLM
+  policy/         policy.yaml (message templates de/en + notify depth; read by engine/resolve.py)
+  graph/          reserved: state/graph logic is to move here from app/state.py
+  ingestion/      reserved: CSV / PDF / MS Project / P6 → ProjectPlan (stretch; not built)
+  integrations/   reserved: channels are handled by n8n; only a Python WhatsApp-export parser would go here
+n8n/              (to add) exported workflow JSON + prompt
 data/demo/        generated demo project + scripted demo messages (with gold labels)
 scripts/          generators and one-off tools
-tests/            pytest; one test file per module at least
-docs/NN-*/        one folder per part
+tests/            pytest; test_api.py replays the gold messages through the API
+docs/             NN-* one folder per part; api.md (HTTP contract); n8n-workflow.md
 ```
 
 Each package folder has its own `CLAUDE.md` with local rules. Stay inside the package you were asked to work on; if you need something from another package, use its public interface or ask for a contract change.
 
-## Contracts (`kraftsync/contracts/models.py`)
+## Contracts
 
-- All modules communicate only via these models. No module imports another module's internals.
-- Additive changes (new optional field) are OK. Renames / removals / type changes need the whole team — flag it, don't do it silently.
-- Flow: `ProjectPlan` (ingestion → graph) · `InboundMessage` (integrations → engine) · `TaskUpdate` (engine → graph) · `GraphEvent` (graph log) · `Discrepancy` (graph → policy) · `Action` (policy → integrations).
+- `kraftsync/contracts/models.py` = domain models; `kraftsync/app/api_models.py` = HTTP envelopes (`UpdateRequest`, `UpdateResponse`, …). Modules communicate only via these. No module imports another module's internals.
+- Additive changes (new optional field) are OK. Renames / removals / type changes need the whole team — flag it, don't do it silently. The n8n output schema is derived from `TaskUpdate`.
+- Flow: `ProjectPlan` (file → state) · `TaskUpdate` (n8n → service, via `UpdateRequest`) · `GraphEvent` (log) · `Discrepancy` (check → resolve) · `Action` (resolve → n8n). `InboundMessage` is defined but unused (n8n normalises messages).
 
 ## Commands
 
 ```bash
 uv sync                                         # install
+uv run pytest -q                                # all tests (includes the demo replay of the 10 gold messages)
+uv run python -m kraftsync.app.serve            # local API for n8n (LAN; token + random port generated into .env on first run)
+uv run python -m kraftsync.app.serve --reload   # same, restarts on code/yaml changes
+uv run python -m kraftsync.app.serve --init     # only create token/port in .env and print them
+cloudflared tunnel --url http://127.0.0.1:<KRAFTSYNC_PORT>   # https URL for n8n Cloud (changes on restart)
 uv run python scripts/generate_demo_plan.py     # regenerate data/demo/*
-uv run pytest -q                                # all tests
-uv run python -m kraftsync.engine.replay data/demo/messages.jsonl   # replay demo chat through the whole pipeline
-uv run python -m kraftsync.engine.eval data/demo/messages.jsonl     # interpretation accuracy vs gold labels
-uv run python -m kraftsync.app.serve            # local API for n8n (LAN, token + random port generated into .env on first run)
 ```
-Commands that don't exist yet are the target interface — create them with exactly these names. Keep this list true.
+Keep this list true: if a command doesn't exist, it isn't here. (LLM accuracy against gold labels is measured in n8n with a Manual Trigger, see `docs/05-engine`.)
 
 ## Conventions
 
 - Python 3.11+, `uv`, Pydantic v2, type hints everywhere, small modules.
-- Dates are calendar days (`date`), timestamps are timezone-aware (`Europe/Vienna`).
-- Config only via env vars (`.env`, see `.env.example`). Never commit secrets, tokens, real phone numbers or `.env`.
-- The event log is append-only. Never UPDATE or DELETE an event. Current state = replay of events.
+- Dates are calendar days (`date`), timestamps are timezone-aware (local time; the machine runs in Vienna).
+- Config only via env vars (`.env`, see `.env.example`). Never commit secrets, tokens, real phone numbers or `.env`. Never log tokens or message text.
+- The local service is started only through `kraftsync.app.serve` (token check, no docs, no access log).
+- The event log (`data/events.jsonl`) is append-only. Never UPDATE or DELETE an event. Current state = plan + replay of events.
 - Use `data/demo/` for everything until the demo works. Real ingestion output is a bonus, not a dependency.
-- Every module must run without network and without an LLM key in tests (use fakes).
-- Before finishing a task: run `uv run pytest -q` and the relevant command above. Update the module's doc if behaviour changed.
-- Commit small, commit often, merge to `main` often. `main` must always run the demo replay.
+- Every module must run without network and without an LLM key in tests (the gold labels are used as claims; the n8n webhook is faked).
+- Before finishing a task: run `uv run pytest -q`. Update the module's doc (and `docs/api.md` for any route change) in the same commit.
+- Commit small, commit often, merge to `main` often. `main` must always pass `uv run pytest -q` (it contains the demo replay).

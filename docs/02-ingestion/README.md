@@ -1,5 +1,7 @@
 # 02 · Ingestion
 
+**Status: not built.** The local service loads `PLAN_PATH` (default `data/demo/plan.json`) directly with `ProjectPlan.model_validate_json`; the demo does not depend on this package. `tests/test_contracts.py` already checks the demo plan (unique ids, known references, acyclic). Everything below is the plan for the stretch import.
+
 Goal: anything a real project already has → a valid `ProjectPlan`.
 
 ## Principle
@@ -10,7 +12,7 @@ The demo runs on `data/demo/plan.json` (generated, consistent). Ingestion must *
 
 | # | Source | How | Notes |
 |---|---|---|---|
-| 1 | CSV set (`persons.csv`, `locations.csv`, `tasks.csv`, `dependencies.csv`) | pandas/csv → Pydantic | Same columns as `data/demo/*.csv`. Must work. |
+| 1 | CSV set (`persons.csv`, `locations.csv`, `tasks.csv`, `dependencies.csv`) | pandas/csv → Pydantic | Same columns as `data/demo/*.csv` (persons now include `job_title`). Must work. |
 | 2 | MS Project XML (MSPDI) / Primavera P6 XER | **MPXJ** (`pip install mpxj`, needs a Java runtime via JPype) | The credibility win: real schedulers export these. Map Task ↔ Task, Relation ↔ Dependency (type + lag), Resource ↔ Person. |
 | 3 | Excel schedules | openpyxl → same as CSV | Many small contractors live in Excel. |
 | 4 | PDF (Bauzeitplan, persons/contact lists, plans) | LLM/vision extraction → **draft** `ProjectPlan` → human review → freeze to JSON | Plan-time only. Never live. Show it, don't depend on it. |

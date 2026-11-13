@@ -2,6 +2,7 @@
 
     uv run python -m kraftsync.app.serve          # run
     uv run python -m kraftsync.app.serve --init   # only create token/port in .env and print them
+    uv run python -m kraftsync.app.serve --reload # restart on changes to kraftsync/**/*.py and *.yaml (dev)
 
 Safety on shared Wi-Fi:
   * binds to the LAN on purpose, but EVERY route except /health needs the X-KraftSync-Token header;
@@ -82,8 +83,13 @@ def main() -> None:
     print("=" * 64)
     if "--init" in sys.argv:
         return
-    uvicorn.run(create_app(settings), host=settings.host, port=settings.port,
-                access_log=False, server_header=False)
+    common = dict(host=settings.host, port=settings.port, access_log=False, server_header=False)
+    if "--reload" in sys.argv:
+        # reload needs an import string; the factory re-reads the env (token/port already set above)
+        uvicorn.run("kraftsync.app.api:create_app", factory=True, reload=True,
+                    reload_dirs=[str(REPO_ROOT / "kraftsync")], reload_includes=["*.py", "*.yaml"], **common)
+        return
+    uvicorn.run(create_app(settings), **common)
 
 
 if __name__ == "__main__":
