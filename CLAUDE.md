@@ -52,7 +52,7 @@ uv run python scripts/generate_demo_plan.py     # regenerate data/demo/*
 uv run pytest -q                                # all tests
 uv run python -m kraftsync.engine.replay data/demo/messages.jsonl   # replay demo chat through the whole pipeline
 uv run python -m kraftsync.engine.eval data/demo/messages.jsonl     # interpretation accuracy vs gold labels
-uv run uvicorn kraftsync.app.api:app --reload   # API + UI
+uv run python -m kraftsync.app.serve            # local API for n8n (LAN, token + random port generated into .env on first run)
 ```
 Commands that don't exist yet are the target interface — create them with exactly these names. Keep this list true.
 

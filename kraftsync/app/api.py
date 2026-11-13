@@ -1,0 +1,173 @@
+"""Local HTTP service: n8n posts interpreted updates here, we check them against the graph
+deterministically and call the n8n webhook only when there is something to tell people.
+
+Start it with `uv run python -m kraftsync.app.serve` (never expose `create_app` without a token).
+Contract: docs/api.md. No `from __future__ import annotations` on purpose (FastAPI introspection).
+"""
+
+import logging
+import secrets
+from datetime import date, datetime
+
+import httpx
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
+
+from kraftsync.app.api_models import (
+    ConflictHook,
+    ContextRequest,
+    ContextResponse,
+    Recipient,
+    StateResponse,
+    TaskView,
+    UpdateRequest,
+    UpdateResponse,
+)
+from kraftsync.app.settings import Settings
+from kraftsync.app.state import ProjectState
+from kraftsync.contracts import Action, EventKind, GraphEvent, UpdateKind
+from kraftsync.engine.check import check, forecast, project_finish
+from kraftsync.engine.resolve import ask_clarification, resolve_all
+
+log = logging.getLogger("kraftsync.api")
+MAX_FORECAST_DAYS = 60   # sanity bound on dates the LLM reports, relative to today
+
+
+def post_hook(url: str, token: str | None, hook: ConflictHook) -> None:
+    """Call the n8n webhook. Never raises; never logs the URL (it may contain a secret path)."""
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["X-KraftSync-Token"] = token
+    try:
+        httpx.post(url, content=hook.model_dump_json(), headers=headers, timeout=5.0).raise_for_status()
+    except httpx.HTTPError as exc:
+        log.warning("conflict hook failed: %s", type(exc).__name__)
+
+
+def create_app(settings: Settings | None = None, state: ProjectState | None = None) -> FastAPI:
+    settings = settings or Settings.from_env()
+    settings.validate()
+    state = state or ProjectState(settings.plan_path, settings.events_path)
+    token = settings.token.encode()
+    docs_on = settings.docs and settings.loopback
+
+    def require_token(x_kraftsync_token: str | None = Header(default=None)) -> None:
+        if x_kraftsync_token is None or not secrets.compare_digest(x_kraftsync_token.encode(), token):
+            raise HTTPException(status_code=401, detail="invalid or missing token")
+
+    app = FastAPI(
+        title="KraftSync local service", version="0",
+        docs_url="/docs" if docs_on else None, redoc_url=None,
+        openapi_url="/openapi.json" if docs_on else None,
+    )
+
+    def today() -> date:
+        return settings.demo_today or date.today()
+
+    def now() -> datetime:
+        return datetime.now().astimezone()
+
+    def finalize(actions: list[Action]) -> tuple[list[Action], dict[str, Recipient]]:
+        """Attach chat ids; in stage mode redirect everything to one chat, prefixed with the real recipient."""
+        out, recipients = [], {}
+        for a in actions:
+            p = state.persons[a.to_person_id]
+            if settings.redirect_chat_id:
+                a = a.model_copy(update={"text": f"[an {p.name}] {a.text}"})
+            out.append(a)
+            recipients[p.id] = Recipient(
+                person_id=p.id, name=p.name, telegram_chat_id=settings.redirect_chat_id or p.telegram_chat_id)
+        return out, recipients
+
+    def process(req: UpdateRequest) -> UpdateResponse:
+        u, t = req.update, now()
+        if state.has_message(u.message_id):
+            return UpdateResponse(status="duplicate")
+        if u.task_id is not None and u.task_id not in state.tasks:
+            raise HTTPException(422, f"unknown task_id {u.task_id!r}; choose from /context candidates")
+        if u.new_forecast_finish and abs((u.new_forecast_finish - today()).days) > MAX_FORECAST_DAYS:
+            raise HTTPException(422, "new_forecast_finish is implausibly far from today")
+
+        sender = state.resolve_sender(req.sender_ref)
+        actor = sender.id if sender else "unknown"
+        events: list[GraphEvent] = [
+            state.log(EventKind.message_received, actor, t, source_message_id=u.message_id,
+                      payload={"channel": req.channel.value, "chat_ref": req.chat_ref, "text": req.text}),
+        ]
+        interpreted = state.log(EventKind.update_interpreted, actor, t, task_id=u.task_id,
+                                source_message_id=u.message_id,
+                                payload={"update": u.model_dump(mode="json")})
+        events.append(interpreted)
+
+        if u.kind in (UpdateKind.irrelevant, UpdateKind.question):
+            return UpdateResponse(status="ignored", note=f"{u.kind.value}: nothing to apply", events=events)
+        if sender is None:
+            return UpdateResponse(status="ignored", note="unknown sender", events=events)
+
+        if u.task_id is None or u.confidence < settings.confidence_min:
+            options = [state.tasks[i] for i in u.candidate_task_ids if i in state.tasks] \
+                or state.candidates_for(sender.id, today())
+            actions, recipients = finalize([ask_clarification(sender, options, u.message_id, t)])
+            return UpdateResponse(status="needs_clarification", note="low confidence or no task",
+                                  events=events, actions=actions, recipients=recipients)
+
+        before = dict(state.tasks)
+        changed = state.apply(u, actor, t)
+        if changed:
+            events.append(changed)
+        found = [d.model_copy(update={"source_event_id": interpreted.id})
+                 for d in check(before, state.tasks, state.deps, u, t)]
+        for d in found:
+            events.append(state.record_discrepancy(d, t))
+        actions, recipients = finalize(
+            resolve_all(found, before, state.tasks, state.deps, state.persons, u, sender, t))
+        return UpdateResponse(status="applied", events=events, discrepancies=found,
+                              actions=actions, recipients=recipients)
+
+    @app.get("/health")
+    def health() -> dict:
+        return {"ok": True}
+
+    api = Depends(require_token)
+
+    @app.post("/context", response_model=ContextResponse, dependencies=[api])
+    def context(req: ContextRequest) -> ContextResponse:
+        # POST (not GET) so phone numbers / ids never end up in URLs or access logs
+        with state.lock:
+            person = state.resolve_sender(req.sender_ref)
+            return ContextResponse(person=person, today=today(),
+                                   candidates=state.candidates_for(person.id if person else None, today()))
+
+    @app.post("/updates", response_model=UpdateResponse, dependencies=[api])
+    def updates(req: UpdateRequest, background: BackgroundTasks) -> UpdateResponse:
+        with state.lock:
+            resp = process(req)
+        if settings.webhook_url and (resp.discrepancies or resp.actions):
+            background.add_task(post_hook, settings.webhook_url, settings.webhook_token, ConflictHook(
+                message_id=req.update.message_id, discrepancies=resp.discrepancies,
+                actions=resp.actions, recipients=resp.recipients))
+        return resp
+
+    @app.get("/state", response_model=StateResponse, dependencies=[api])
+    def get_state() -> StateResponse:
+        with state.lock:
+            fc = forecast(state.tasks, state.deps)
+            views = [TaskView(**t.model_dump(), cpm_start=fc[t.id][0], cpm_finish=fc[t.id][1])
+                     for t in state.tasks.values()]
+            base = {t.id: t for t in state.plan.tasks}
+            return StateResponse(
+                project_id=state.plan.project_id, name=state.plan.name, today=today(),
+                project_finish_planned=project_finish(forecast(base, state.deps), base, state.deps),
+                project_finish_forecast=project_finish(fc, state.tasks, state.deps),
+                tasks=views, dependencies=state.deps, open_discrepancies=list(state.discrepancies))
+
+    @app.get("/events", response_model=list[GraphEvent], dependencies=[api])
+    def get_events(since: int = 0) -> list[GraphEvent]:
+        with state.lock:
+            return [e for e in state.events if (e.id or 0) > since]
+
+    @app.post("/reset", dependencies=[api])
+    def reset() -> dict:
+        state.reset()
+        return {"ok": True, "tasks": len(state.tasks)}
+
+    return app

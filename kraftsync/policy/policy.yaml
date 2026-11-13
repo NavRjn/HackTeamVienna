@@ -28,15 +28,19 @@ rules:
 templates:
   de:
     delay_notify: "Info: {task_name} verschiebt sich von {old_start} auf {new_start}. Grund: {cause}."
-    delay_escalate: "Übergabe {milestone} verschiebt sich {old} → {new} (+{days} Tage). Ursache: {cause}. Bitte entscheiden."
+    delay_escalate: "Termin '{milestone}' verschiebt sich {old} → {new} (+{days} Tage). Ursache: {cause}. Bitte entscheiden."
     hold_point: "STOPP: {task_name} wurde begonnen, bevor {inspection_name} abgenommen ist. Bitte bestätigen."
     scope_change: "Änderungswunsch bei {task_name}: {description} (von {who}). Als Nachtrag freigeben?"
     clarify: "Welche Aufgabe meinst du? {options}"
     silent_overdue: "{task_name} war für {date} geplant. Fertig oder neuer Termin?"
+    out_of_sequence: "Achtung: {task_name} wurde begonnen, obwohl noch offen ist: {pred_names}. Stimmt das so?"
+    blocked: "{task_name} ist blockiert: {blocker}. Bitte entscheiden."
   en:
     delay_notify: "FYI: {task_name} moves from {old_start} to {new_start}. Cause: {cause}."
-    delay_escalate: "Handover {milestone} moves {old} → {new} (+{days} days). Cause: {cause}. Decision needed."
+    delay_escalate: "Milestone '{milestone}' moves {old} → {new} (+{days} days). Cause: {cause}. Decision needed."
     hold_point: "STOP: {task_name} started before {inspection_name} passed. Please confirm."
     scope_change: "Change requested on {task_name}: {description} (by {who}). Approve as change order?"
     clarify: "Which task do you mean? {options}"
     silent_overdue: "{task_name} was due {date}. Done, or new date?"
+    out_of_sequence: "Heads-up: {task_name} was started while still open: {pred_names}. Is that right?"
+    blocked: "{task_name} is blocked: {blocker}. Decision needed."
