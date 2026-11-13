@@ -27,10 +27,23 @@ class Role(str, Enum):
     supplier = "supplier"
 
 
+class JobTitle(str, Enum):
+    """What the person does on site (craft). Role above = authority (who decides)."""
+    SUPERINTENDENT = "superintendent"
+    ARCHITECT = "architect"
+    CARPENTER = "carpenter"
+    PLUMBER = "plumber"
+    ELECTRICIAN = "electrician"
+    INSPECTOR = "inspector"
+    DRYWALLER = "drywaller"
+    PAINTER = "painter"
+
+
 class Person(BaseModel):
     id: str
     name: str
     role: Role
+    job_title: JobTitle | None = None  # additive; None = not specified
     company: str | None = None
     trade: str | None = None           # electrical, plumbing, drywall, ...
     phone: str | None = None           # E.164, used for WhatsApp matching
