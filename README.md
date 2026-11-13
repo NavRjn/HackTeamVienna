@@ -67,11 +67,11 @@ sequenceDiagram
 
     P->>TG: "Top 6 Sanitär wird diese Woche nicht fertig ... Donnerstag + 1 Tag"
     TG->>N: new message (trigger)
-    N->>API: POST /context {sender_name, received_at, text}
-    API-->>N: person + up to 15 candidate tasks + today
-    N->>L: message + candidates + today
+    N->>API: POST /context {sender_id, received_at, text}
+    API-->>N: person + own tasks (±3 days) + related tasks + today
+    N->>L: message + tasks + related_tasks + today
     L-->>N: TaskUpdate: T6-PLUMB-RI, delayed, 2026-11-13, confidence 0.93
-    N->>API: POST /updates {sender_name, text, updates}
+    N->>API: POST /updates {sender_id, text, updates}
     Note over API: apply to graph, recompute dates, check, decide who is told
     API-->>N: delay +3d, 10 tasks shift, handover 12-06 to 12-09, 3 actions
     N->>TG: send each action's text to its recipient
@@ -84,26 +84,32 @@ sequenceDiagram
 
 ```json
 // request
-{ "sender_name": "Emre Yılmaz", "received_at": "2026-11-09T08:15:00+01:00",
+{ "sender_id": 123456789, "received_at": "2026-11-09T08:15:00+01:00",
   "text": "Top 6 Sanitär wird diese Woche nicht fertig ..." }
 // response (shortened)
 {
   "person": { "id": "P-SAN", "name": "Emre Yılmaz", "role": "foreman", "trade": "plumbing", "language": "de" },
-  "candidates": [ { "id": "T6-PLUMB-RI", "name": "T6 Sanitär Rohinstallation + Vorwand", "status": "in_progress",
-                    "planned_finish": "2026-11-10" }, "... up to 15 tasks ..." ],
+  "tasks": [ { "id": "T6-PLUMB-RI", "name": "T6 Sanitär Rohinstallation + Vorwand", "status": "in_progress",
+               "planned_finish": "2026-11-10" } ],
+  "related_tasks": [ { "id": "T6-INSP", "name": "T6 Abnahme Installationen (vor Beplankung)", "responsible_person_id": "P-INS" },
+                     "... other people's tasks that may be meant ..." ],
   "today": "2026-11-09"
 }
 ```
-Candidates (at most 15): the sender's own open tasks first, then tasks at locations named in the message ("Top 6", "Bad Top 6"), then anything within ±7 days of today. The LLM may only choose a `task_id` from this list (or null).
+Two lists, at most 15 each, kept apart on purpose:
+- `tasks`: the sender's **own** tasks (assigned to them or their trade) that are active within **±3 days** of today: in progress, overlapping the window, overdue and still open, or just finished.
+- `related_tasks`: **other people's** tasks that may be what the message is about: tasks at locations named in the text ("Top 6", "Bad Top 6"), direct predecessors/successors of the sender's tasks, other tasks active now.
 
-The sender is identified by **full name only** (Telegram gives `first_name` + `last_name`; n8n joins them). Matching ignores case, accents and extra spaces; a partial name does not match. Fine for the synthetic demo names; in a real deployment anyone could rename themselves, so ids would need to be bound to people. "Today" is the message date (`received_at`), unless `DEMO_TODAY` is set, which always wins.
+The LLM may only choose a `task_id` from these two lists (or null) and should prefer `tasks`.
+
+The sender is identified by their **Telegram user id** (`message.from.id`), matched to `telegram_chat_id` in the plan. An unknown id gets empty lists. "Today" is the message date (`received_at`), unless `DEMO_TODAY` is set, which always wins.
 
 **2. n8n's LLM node produces one `TaskUpdate` per claim.** This is the data format between n8n and the service: a JSON object that is one *claim about one task*. One chat message can carry several claims ("plumbing done, tiling will be late"). It is the `TaskUpdate` model in `kraftsync/contracts/models.py`.
 
 | Field | Filled by | Example |
 |---|---|---|
 | `message_id` | n8n, unique **per claim**: Telegram chat id + message id + `#n`; idempotency key | `"tg:-100123:456#1"` |
-| `task_id` | LLM, from candidates only, or `null` | `"T6-PLUMB-RI"` |
+| `task_id` | LLM, from `tasks` / `related_tasks` only (prefer `tasks`), or `null` | `"T6-PLUMB-RI"` |
 | `kind` | LLM | `started` · `progress` · `completed` · `delayed` · `blocked` · `unblocked` · `modified` · `question` · `irrelevant` |
 | `confidence` | LLM (0–1) | `0.93` |
 | `new_forecast_finish` | LLM, resolves "Donnerstag + 1 Tag" using `today` | `"2026-11-13"` |
@@ -114,7 +120,7 @@ The sender is identified by **full name only** (Telegram gives `first_name` + `l
 **3. `POST /updates`: "apply this claim, tell me what it breaks."**
 
 ```json
-{ "sender_name": "Emre Yılmaz", "text": "<original message>", "received_at": "2026-11-09T08:15:00+01:00",
+{ "sender_id": 123456789, "text": "<original message>", "received_at": "2026-11-09T08:15:00+01:00",
   "updates": [ { "message_id": "demo:02", "task_id": "T6-PLUMB-RI", "kind": "delayed", "confidence": 0.93,
               "reported_on": "2026-11-09", "new_forecast_finish": "2026-11-13",
               "blocker": "pre-wall elements not delivered", "rationale": "supplier Thursday, +1 day", "model": "n8n-claude" } ] }
@@ -340,7 +346,7 @@ In n8n, call `<that URL>/context` and `<that URL>/updates` with the header `X-Kr
 
 | Metric | Value |
 |---|---|
-| Unit/API tests | 19 passing (includes a replay of all 10 gold demo messages) |
+| Unit/API tests | 21 passing (includes a replay of all 10 gold demo messages) |
 | Detected discrepancies vs gold labels | 10 / 10 messages match |
 | LLM task mapping accuracy, update-kind accuracy, wrong-and-confident rate | TBD (n8n LLM step not measured yet) |
 | Message → notification latency | TBD |
@@ -349,5 +355,5 @@ In n8n, call `<that URL>/context` and `<that URL>/updates` with the header `X-Kr
 
 - Demo project and chat messages are synthetic (`data/demo/`), generated to be schedule-consistent.
 - Calendar days, no working calendars.
-- Each demo phone's Telegram name (first + last name) must equal the name of its person in `data/demo/persons.csv`, and each person's `telegram_chat_id` must be filled in, so messages can be sent back.
+- Each demo person's Telegram user id must be set as `telegram_chat_id` in the plan (via `scripts/generate_demo_plan.py`, which writes both `persons.csv` and `plan.json`; the service reads `plan.json`). Without it the person is an unknown sender and their messages are ignored.
 - Licence: the repo carries an MIT `LICENSE`, but the Talona slide says Talona work goes to a private repository. Confirm with the organisers before submitting.

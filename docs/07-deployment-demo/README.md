@@ -64,7 +64,7 @@ The API needs the token on every call: the page asks for it once and keeps it in
 
 - [ ] `.env`: `DEMO_TODAY=2026-11-09`; `DEMO_REDIRECT_CHAT_ID` = the demo group if per-person chat ids are not filled in.
 - [ ] Service running, tunnel up, n8n `KRAFTSYNC_BASE_URL` points at the current tunnel URL; `GET <url>/health` is ok.
-- [ ] Demo Telegram group with the bot (privacy mode off); each phone's Telegram first + last name equals a person in `persons.csv` (or test accounts).
+- [ ] Demo Telegram group with the bot (privacy mode off); each demo person's Telegram user id is set as `telegram_chat_id` in the plan (see `docs/03-integrations`: edit `scripts/generate_demo_plan.py` and regenerate; the service reads `plan.json`).
 - [ ] `POST /reset` between rehearsals.
 - [ ] Scripted messages printed on a card (from `data/demo/messages.jsonl`), in order.
 - [ ] Fallback if Telegram or Wi-Fi fails: n8n Manual Trigger with the scripted messages, or `curl` to `/updates`.

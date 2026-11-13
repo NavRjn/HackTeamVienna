@@ -7,7 +7,7 @@ import json
 import re
 import threading
 import unicodedata
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -24,18 +24,32 @@ from kraftsync.contracts import (
     UpdateKind,
 )
 
-NEAR_DAYS = 7
-MAX_CANDIDATES = 15
+DATE_WINDOW_DAYS = 3       # a task is "on this date" if it is active within +-3 days of today
+MAX_TASKS = 15             # cap per list (`tasks`, `related_tasks`)
 
 
-def _norm_name(name: str) -> str:
-    """Case-, accent- and whitespace-insensitive: 'Marko  PETROVIC' == 'Marko Petrović'."""
-    folded = unicodedata.normalize("NFKD", name).casefold()
+def _fold(text: str) -> str:
+    """Case-, accent- and whitespace-insensitive form, used to match location names in message text."""
+    folded = unicodedata.normalize("NFKD", text).casefold()
     return " ".join("".join(c for c in folded if not unicodedata.combining(c)).split())
 
 
 def _tokens(text: str) -> set[str]:
-    return set(re.findall(r"\w+", _norm_name(text)))
+    return set(re.findall(r"\w+", _fold(text)))
+
+
+def _active_around(t: Task, today: date) -> bool:
+    """Is this task relevant on `today`? In progress/blocked, overlapping the +-3 day window, overdue and still
+    open, or finished within the window (people report on what they just finished)."""
+    lo, hi = today - timedelta(days=DATE_WINDOW_DAYS), today + timedelta(days=DATE_WINDOW_DAYS)
+    if t.status == TaskStatus.cancelled:
+        return False
+    if t.status == TaskStatus.done:
+        return t.actual_finish is not None and lo <= t.actual_finish <= hi
+    if t.status in (TaskStatus.in_progress, TaskStatus.blocked):
+        return True
+    last = max(t.planned_finish, t.forecast_finish or t.planned_finish)
+    return last < lo or (t.planned_start <= hi and last >= lo)
 
 
 class ProjectState:
@@ -78,10 +92,10 @@ class ProjectState:
 
     # -- lookups ---------------------------------------------------------------------------
 
-    def resolve_sender(self, full_name: str) -> Person | None:
-        """Identify a sender by full name only (synthetic names in the demo; ids/phones are not used)."""
-        wanted = _norm_name(full_name)
-        return next((p for p in self.persons.values() if _norm_name(p.name) == wanted), None)
+    def resolve_sender(self, sender_id: int) -> Person | None:
+        """Identify a sender by Telegram user id (`Person.telegram_chat_id` in the plan). Unknown id -> None."""
+        return next((p for p in self.persons.values()
+                     if p.telegram_chat_id is not None and p.telegram_chat_id == sender_id), None)
 
     def has_message(self, message_id: str) -> bool:
         return any(e.kind == EventKind.update_interpreted and e.source_message_id == message_id for e in self.events)
@@ -97,27 +111,38 @@ class ProjectState:
             hit |= kids
         return hit
 
-    def candidates_for(self, person_id: str | None, today: date, text: str = "") -> list[Task]:
-        """Deterministic shortlist for the LLM: the sender's own open tasks first, then tasks at locations
-        named in the message, then anything near today."""
+    def context_for(self, person_id: str | None, today: date, text: str = "") -> tuple[list[Task], list[Task]]:
+        """Deterministic shortlists for the LLM, kept apart on purpose.
+
+        tasks:         the sender's own tasks (assigned to them or to their trade) that are active around `today`.
+        related_tasks: everyone else's tasks that may be what the message is about: tasks at locations named in
+                       the text, direct predecessors/successors of the sender's tasks, other tasks active around
+                       `today`. Lower authority: the prompt should prefer `tasks`.
+        Unknown sender -> both empty.
+        """
         person = self.persons.get(person_id) if person_id else None
+        if person is None:
+            return [], []
+
+        def own(t: Task) -> bool:
+            return t.responsible_person_id == person.id or bool(person.trade and t.trade == person.trade)
+
+        def by_date(t: Task) -> tuple:
+            return (t.status == TaskStatus.done, t.planned_start)
+
+        mine = sorted((t for t in self.tasks.values() if own(t) and _active_around(t, today)), key=by_date)
+        mine_ids = {t.id for t in mine}
+        neighbours = {d.successor_id for d in self.deps if d.predecessor_id in mine_ids} | \
+                     {d.predecessor_id for d in self.deps if d.successor_id in mine_ids}
         mentioned = self._locations_mentioned(text) if text else set()
 
-        def own_open(t: Task) -> bool:
-            return bool(person) and t.status != TaskStatus.done and (
-                t.responsible_person_id == person.id or bool(person.trade and t.trade == person.trade))
-
-        def near(t: Task) -> bool:
-            dates = [t.planned_start, t.planned_finish, t.actual_start, t.actual_finish]
-            return any(d is not None and abs((d - today).days) <= NEAR_DAYS for d in dates)
-
-        def named(t: Task) -> bool:
-            return t.location_id in mentioned
-
-        pool = [t for t in self.tasks.values()
-                if t.status != TaskStatus.cancelled and (own_open(t) or named(t) or near(t))]
-        pool.sort(key=lambda t: (not own_open(t), not named(t), t.status == TaskStatus.done, t.planned_start))
-        return pool[:MAX_CANDIDATES]
+        # own tasks outside the +-3 day window stay hidden, unless the message names their location
+        related = [t for t in self.tasks.values()
+                   if t.id not in mine_ids and t.status != TaskStatus.cancelled
+                   and (t.location_id in mentioned
+                        or (not own(t) and (t.id in neighbours or _active_around(t, today))))]
+        related.sort(key=lambda t: (t.location_id not in mentioned, t.id not in neighbours, *by_date(t)))
+        return mine[:MAX_TASKS], related[:MAX_TASKS]
 
     # -- writes (append-only) ---------------------------------------------------------------
 

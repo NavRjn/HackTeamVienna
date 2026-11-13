@@ -13,10 +13,10 @@ The service is reachable on the LAN and through the tunnel; the token is the onl
 means the token can be sniffed there, so use the https tunnel URL whenever possible.
 
 ## Who is the sender
-By **full name only**: Telegram `first_name` + `last_name`, joined with a space (e.g. `"Emre Yılmaz"`).
-Matching ignores case, accents and extra spaces and must equal a person's `name` in the plan; a partial name or
-an unknown name gives `person: null` (and `ignored: unknown sender` on `/updates`).
-Caveat: names are not authentication. Fine for the synthetic demo; for real use bind Telegram ids to people.
+By **Telegram user id** (`message.from.id`, an integer; a numeric string is accepted), sent as `sender_id`. The service matches it to
+`telegram_chat_id` of a person in the plan. An unknown id gives `person: null` with empty task lists (and `ignored: unknown sender`
+on `/updates`), so nothing about the project leaks to strangers. Telegram authenticates the id; display names are not used.
+The ids must be present in `plan.json`: Put each person's Telegram user id into `scripts/generate_demo_plan.py` (`Person(..., telegram_chat_id=<id>)`) and run `uv run python scripts/generate_demo_plan.py`: it writes both `persons.csv` and `plan.json`, and the service reads **`plan.json`**, so editing only the CSV changes nothing.
 
 "Today" = `DEMO_TODAY` if set (stage override), else the date of `received_at`, else the server's date.
 
@@ -34,18 +34,23 @@ Both n8n calls are POSTs so names and message text never appear in URLs or logs.
 
 ### POST /context
 ```json
-{ "sender_name": "Emre Yılmaz", "received_at": "2026-11-09T08:15:00+01:00", "text": "Top 6 Sanitär wird ..." }
+{ "sender_id": 123456789, "received_at": "2026-11-09T08:15:00+01:00", "text": "Top 6 Sanitär wird ..." }
 ```
-`received_at` and `text` are optional. → `{ "person": Person | null, "candidates": [Task, ...≤15], "today": "2026-11-09" }`.
+`received_at` and `text` are optional. → `{ "person": Person | null, "tasks": [Task, ...≤15], "related_tasks": [Task, ...≤15], "today": "2026-11-09" }`.
 
-Candidates, in this order: the sender's own open tasks (responsible person or same trade), tasks at locations whose
-name words all appear in `text` ("Top 6", "Bad Top 6" → that unit/room and everything below it), tasks with a date
-within ±7 days of today. The LLM must pick `task_id` only from `candidates` (or null). Unknown ids get `422`.
+- **`tasks`**: the sender's own tasks (assigned to them or to their trade) that are *active around today*: in progress/blocked,
+  overlapping the ±3-day window, overdue and still open, or finished inside the window. Own tasks further out are not listed.
+- **`related_tasks`**: other people's tasks that may be meant, in this order: tasks at locations whose name words all appear in
+  `text` ("Top 6", "Bad Top 6" → that unit/room and everything below it), direct predecessors/successors of the sender's tasks,
+  other tasks active around today. Never contains a task from `tasks`. The sender's own tasks outside the ±3-day window
+  appear here only when the message names their location (so "can I start waterproofing in Top 5?" can still find a task 3 weeks out).
+
+The LLM must pick `task_id` only from these two lists, preferring `tasks` (or null). Unknown ids get `422`.
 
 ### POST /updates
 ```json
 {
-  "sender_name": "Emre Yılmaz",
+  "sender_id": 123456789,
   "text": "Top 6 Sanitär wird diese Woche nicht fertig ...",
   "received_at": "2026-11-09T08:15:00+01:00",
   "channel": "telegram",

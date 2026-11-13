@@ -30,7 +30,7 @@ Cost (cite these in the pitch):
 Architecture in one line: **Telegram → n8n (LLM reads the message) → local service (graph checks it) → n8n → Telegram.** See `01-architecture`.
 
 1. **Plan → graph.** Tasks, dependencies, people, locations from `data/demo/plan.json` (CSV/MS Project/P6 import is a stretch, `02-ingestion`).
-2. **Chat → claims.** Telegram message arrives in n8n; the sender is identified by full name; the local service returns the sender's candidate tasks; n8n's LLM node turns the message into claims (task, kind, new date, confidence). Unsure → the sender is asked instead.
+2. **Chat → claims.** Telegram message arrives in n8n; the sender is identified by Telegram id; the local service returns the sender's own tasks for that date plus related tasks; n8n's LLM node turns the message into claims (task, kind, new date, confidence). Unsure → the sender is asked instead.
 3. **Detect.** The local service applies each claim, recomputes dates (forward pass) and raises discrepancies: delay with downstream impact, out-of-sequence work, hold-point violation, scope change, blocked. (Contradicting reports and overdue-without-report are planned.)
 4. **Resolve.** The policy decides who needs to know and what to ask; the response lists ready-to-send messages.
 5. **Notify.** n8n sends those messages on Telegram.

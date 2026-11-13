@@ -96,7 +96,8 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
         if sender is None:
             return done("ignored", "unknown sender")
         if u.task_id is None or u.confidence < settings.confidence_min:
-            options = [state.tasks[i] for i in u.candidate_task_ids if i in state.tasks]                 or state.candidates_for(sender.id, day, req.text)
+            mine, related = state.context_for(sender.id, day, req.text)
+            options = [state.tasks[i] for i in u.candidate_task_ids if i in state.tasks] or mine or related
             return done("needs_clarification", "low confidence or no task",
                         actions=[ask_clarification(sender, options, u.message_id, t)])
 
@@ -118,12 +119,12 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
         day = today(req.received_at)
         for u in req.updates:
             if u.task_id is not None and u.task_id not in state.tasks:
-                raise HTTPException(422, f"unknown task_id {u.task_id!r}; choose from /context candidates")
+                raise HTTPException(422, f"unknown task_id {u.task_id!r}; choose from the /context tasks")
             if u.new_forecast_finish and abs((u.new_forecast_finish - day).days) > MAX_FORECAST_DAYS:
                 raise HTTPException(422, "new_forecast_finish is implausibly far from today")
 
         t = now()
-        sender = state.resolve_sender(req.sender_name)
+        sender = state.resolve_sender(req.sender_id)
         fresh = [u for u in req.updates if not state.has_message(u.message_id)]
         message_event = None
         if fresh:   # the raw message is logged once, even if it carries several claims
@@ -153,12 +154,12 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
 
     @app.post("/context", response_model=ContextResponse, dependencies=[api])
     def context(req: ContextRequest) -> ContextResponse:
-        # POST (not GET) so names and message text never end up in URLs or access logs
+        # POST (not GET) so ids and message text never end up in URLs or access logs
         with state.lock:
-            person = state.resolve_sender(req.sender_name)
+            person = state.resolve_sender(req.sender_id)
             day = today(req.received_at)
-            return ContextResponse(person=person, today=day,
-                                   candidates=state.candidates_for(person.id if person else None, day, req.text))
+            mine, related = state.context_for(person.id if person else None, day, req.text)
+            return ContextResponse(person=person, today=day, tasks=mine, related_tasks=related)
 
     @app.post("/updates", response_model=UpdateResponse, dependencies=[api])
     def updates(req: UpdateRequest, background: BackgroundTasks) -> UpdateResponse:

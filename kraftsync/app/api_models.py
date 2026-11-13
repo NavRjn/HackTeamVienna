@@ -18,22 +18,23 @@ from kraftsync.contracts import (
 
 
 class ContextRequest(BaseModel):
-    sender_name: str = Field(min_length=1, max_length=200)   # full name, e.g. "Emre Yılmaz"
+    sender_id: int                                            # Telegram user id (message.from.id); must be in the plan
     received_at: datetime | None = None                       # message time; sets "today" unless DEMO_TODAY is set
     text: str = Field(default="", max_length=4000)            # used to add tasks at locations named in the message
 
 
 class ContextResponse(BaseModel):
-    """What n8n puts into the LLM prompt. The LLM may only pick task ids from `candidates`."""
+    """What n8n puts into the LLM prompt. The LLM may only pick task ids from `tasks` or `related_tasks`."""
     person: Person | None
-    candidates: list[Task]
+    tasks: list[Task]            # the sender's own tasks that are active around `today` (+-3 days); prefer these
+    related_tasks: list[Task]    # other people's tasks that may be meant: named locations, neighbours, active now
     today: date
 
 
 class UpdateRequest(BaseModel):
     """One chat message with one or more claims about tasks. Each claim needs its own unique `message_id`
     (e.g. "tg:123:456#1", "tg:123:456#2"): it is the idempotency key."""
-    sender_name: str = Field(min_length=1, max_length=200)
+    sender_id: int               # Telegram user id (message.from.id)
     text: str = Field(default="", max_length=4000)
     received_at: datetime
     channel: Channel = Channel.telegram

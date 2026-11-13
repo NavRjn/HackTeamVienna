@@ -20,9 +20,9 @@ Rejected before any of this with `422`: a `task_id` that is not in the plan, a `
 
 ## Interpretation design (the n8n LLM node)
 
-- **Shortlist first, then classify.** The LLM never sees "all tasks". `POST /context` returns ≤ 15 candidates: the sender's own open tasks, tasks at locations named in the message, tasks near today. Fewer choices → fewer wrong mappings.
-- **Constrained output.** Structured output with a JSON schema; `task_id` is one of the candidate ids or null. n8n nulls any id not in the candidates; the service rejects unknown ids with `422`.
-- **Context in the prompt:** today's date and weekday (from `/context`, to resolve "Donnerstag", "morgen"), the sender (name, trade), candidate tasks (id, name, location, status, planned dates), a glossary (Beplankung, Vorwand, Rohinstallation, Estrich, Abnahme, Top = apartment, OG = floor).
+- **Shortlist first, then classify.** The LLM never sees "all tasks". `POST /context` returns two short lists: `tasks` (the sender's own tasks active within ±3 days of today, ≤ 15) and `related_tasks` (named locations, neighbours of the sender's tasks, other tasks active now; ≤ 15). The prompt tells the model to prefer `tasks`. Fewer choices → fewer wrong mappings.
+- **Constrained output.** Structured output with a JSON schema; `task_id` is an id from `tasks` or `related_tasks`, or null. n8n nulls any id not in those lists; the service rejects unknown ids with `422`.
+- **Context in the prompt:** today's date and weekday (from `/context`, to resolve "Donnerstag", "morgen"), the sender (name, trade), the two task lists `tasks` (own) and `related_tasks` (id, name, location, status, planned dates), a glossary (Beplankung, Vorwand, Rohinstallation, Estrich, Abnahme, Top = apartment, OG = floor).
 - **Several claims per message:** one claim per task mentioned; each gets its own `message_id` (`<base>#n`).
 - **Confidence:** the model reports it; the service enforces `CONFIDENCE_MIN` (default 0.7). Combining it with candidate margin and sender-trade checks (an electrician reporting on a plumbing task) is planned, not built.
 - **Dates:** relative dates are resolved by the model; the service sanity-checks them (±60 days from today).

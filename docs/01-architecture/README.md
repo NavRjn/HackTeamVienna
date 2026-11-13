@@ -24,12 +24,12 @@ flowchart LR
 
 ```
 Telegram message
-  → n8n: Telegram Trigger, Normalize (full name, ISO time, unique id)
-  → n8n: POST /context {sender_name, received_at, text}
-        local: resolve sender by full name; shortlist <= 15 candidate tasks        (deterministic)
+  → n8n: Telegram Trigger, Normalize (Telegram id, ISO time, unique id)
+  → n8n: POST /context {sender_id, received_at, text}
+        local: resolve sender by Telegram id; tasks (own, +-3 days) + related_tasks   (deterministic)
   → n8n: LLM node  — the ONLY AI step
-        message + candidates + today  →  claims[]  (task_id from candidates or null, kind, confidence, dates, rationale)
-  → n8n: add message_id / reported_on / model, guard task ids, POST /updates {sender_name, text, updates[]}
+        message + tasks + related_tasks + today  →  claims[]  (task_id from those lists or null, kind, confidence, dates, rationale)
+  → n8n: add message_id / reported_on / model, guard task ids, POST /updates {sender_id, text, updates[]}
         local, per claim:                                                          (deterministic)
           duplicate?  → stop
           unknown task id / implausible date → 422
@@ -47,8 +47,8 @@ Optional: the service also POSTs the conflict to `N8N_CONFLICT_WEBHOOK_URL` when
 |---|---|---|---|
 | Plan load (`plan.json`; CSV/MS Project/P6 later) | yes | local | parsers |
 | PDF ingestion | AI allowed, output reviewed and frozen into `plan.json` first | plan time | not live |
-| Sender resolution (full name) | yes | local | lookup in persons list |
-| Candidate shortlist | yes | local | own open tasks, locations named in the text, dates near today |
+| Sender resolution (Telegram id) | yes | local | lookup of `telegram_chat_id` in the persons list |
+| Candidate shortlist | yes | local | `tasks` = the sender's own tasks active within ±3 days; `related_tasks` = named locations, neighbours, others active now |
 | **Message → claims (`TaskUpdate`)** | **no (LLM)** | **n8n** | natural language, slang, German/English mix |
 | Guards on the claim (id exists, date ±60 days, confidence gate, idempotency) | yes | local | an LLM output is never applied blindly |
 | Apply, forecast, discrepancy detection | yes | local | testable, explainable |
@@ -100,8 +100,8 @@ def ask_clarification(sender: Person, options: list[Task], message_id: str, now)
 
 # kraftsync/app/state.py   (placeholder for the graph package; owns state + events.jsonl)
 class ProjectState:
-    resolve_sender(full_name) -> Person | None          # full name only, ignores case/accents/spaces
-    candidates_for(person_id, today, text="") -> list[Task]
+    resolve_sender(sender_id: int) -> Person | None     # Telegram user id == Person.telegram_chat_id
+    context_for(person_id, today, text="") -> (tasks, related_tasks)   # each <= 15
     apply(update, actor, now) -> GraphEvent | None
     record_discrepancy(d, now) -> GraphEvent
     log(kind, actor, now, ...) -> GraphEvent;  has_message(message_id);  reset()
@@ -122,4 +122,5 @@ class ProjectState:
 | Conflict detection local and deterministic, not in n8n | Testable, explainable, reproducible; the LLM only makes claims (see README, "who should detect") |
 | Claim about one task, not a graph fragment from the LLM | Comparing an LLM-made graph with the real one would just find the LLM's mistakes |
 | Pydantic + JSON files, no Supabase | Nobody on the team knows Supabase; everyone knows Pydantic; one state owner |
-| Full-name sender identity | Telegram supplies first + last name; names are synthetic in the demo. Not authentication (see `docs/api.md`) |
+| Telegram-id sender identity | Telegram authenticates the id (a display name can be faked); the team hardcodes the ids in the plan |
+| `tasks` and `related_tasks` kept apart | The LLM should prefer the sender's own tasks; other people's tasks are only a fallback, so it is harder to attach a message to the wrong trade |

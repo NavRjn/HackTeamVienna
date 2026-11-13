@@ -22,7 +22,7 @@ Read before doing anything non-trivial:
 - The **only** non-deterministic step is the interpretation in n8n's LLM node: chat message → `TaskUpdate` claims (one claim about one task). There is no LLM call in this repo's Python.
 - Everything else is deterministic, unit-tested Python: sender lookup, candidate shortlist, graph state, forecast dates, discrepancy detection, resolution policy, routing.
 - A claim below `CONFIDENCE_MIN` (or without a task) is **never applied**; the service asks the sender instead.
-- Never let an LLM invent task ids, person ids, dates or dependencies. It may only choose from the candidates `POST /context` returns; the service rejects unknown ids.
+- Never let an LLM invent task ids, person ids, dates or dependencies. It may only choose from the `tasks` / `related_tasks` that `POST /context` returns; the service rejects unknown ids.
 - Don't make the LLM send a graph fragment or decide "is this a conflict" — it sends claims, the graph decides.
 
 ## Layout

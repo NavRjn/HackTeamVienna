@@ -86,12 +86,12 @@ unfinished_predecessors(task_id, tasks, deps) -> list[Task]
 check(before, after, deps, update, now) -> list[Discrepancy]
 
 # kraftsync/app/state.py — ProjectState (to become graph/)
-resolve_sender(full_name) -> Person | None
-candidates_for(person_id, today, text="") -> list[Task]     # own open tasks, tasks at locations named in text, tasks near today; <= 15
+resolve_sender(sender_id: int) -> Person | None            # Telegram user id == Person.telegram_chat_id
+context_for(person_id, today, text="") -> (tasks, related_tasks)   # each <= 15; unknown sender -> both empty
 apply(update, actor, now) -> GraphEvent | None
 record_discrepancy(d, now) -> GraphEvent
 ```
-`candidates_for` order: sender's own open tasks (responsible person or same trade), then tasks at locations whose name words all appear in the text ("Top 6", "Bad Top 6" include everything below that location), then tasks with a date within ±7 days of today; done tasks last.
+`context_for` keeps two lists apart on purpose. **`tasks`**: the sender's own tasks (assigned to them or to their trade) that are *active around today*, meaning in progress/blocked, overlapping the ±3-day window, overdue and still open, or finished inside the window; own tasks further out (e.g. 18 days away) are not listed. **`related_tasks`**: other people's tasks that may be what the message is about, ordered: tasks at locations whose name words all appear in the text ("Top 6", "Bad Top 6" include everything below that location), then direct predecessors/successors of the sender's tasks, then other tasks active around today; never a task from `tasks`. The sender's own tasks outside the window show up here only when the text names their location.
 
 ## Done when (tests)
 
