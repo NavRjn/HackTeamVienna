@@ -1,0 +1,42 @@
+# Resolution policy (see docs/06-resolution-policy). Deterministic: code applies these rules.
+confidence_min: 0.7
+quiet_hours: {start: "20:00", end: "06:30", except_severity: [critical]}
+dedup_window_hours: 2
+downstream_levels_to_notify: 2
+
+rules:
+  delay:
+    notify: downstream_responsible
+    escalate_to_site_manager_if: [critical_path_affected, project_finish_moved]
+  hold_point_violation:
+    escalate: [site_manager, inspector]
+    ask: [sender]
+  out_of_sequence:
+    ask: [sender, predecessor_responsible]
+  blocked:
+    escalate: [site_manager]
+  scope_change:
+    escalate: [site_manager]
+  conflicting_reports:
+    ask: [reporters]
+  unknown_task:
+    ask: [sender]
+  silent_overdue:
+    ask: [task_responsible]
+    escalate_to_site_manager_after_hours: 48
+
+templates:
+  de:
+    delay_notify: "Info: {task_name} verschiebt sich von {old_start} auf {new_start}. Grund: {cause}."
+    delay_escalate: "Übergabe {milestone} verschiebt sich {old} → {new} (+{days} Tage). Ursache: {cause}. Bitte entscheiden."
+    hold_point: "STOPP: {task_name} wurde begonnen, bevor {inspection_name} abgenommen ist. Bitte bestätigen."
+    scope_change: "Änderungswunsch bei {task_name}: {description} (von {who}). Als Nachtrag freigeben?"
+    clarify: "Welche Aufgabe meinst du? {options}"
+    silent_overdue: "{task_name} war für {date} geplant. Fertig oder neuer Termin?"
+  en:
+    delay_notify: "FYI: {task_name} moves from {old_start} to {new_start}. Cause: {cause}."
+    delay_escalate: "Handover {milestone} moves {old} → {new} (+{days} days). Cause: {cause}. Decision needed."
+    hold_point: "STOP: {task_name} started before {inspection_name} passed. Please confirm."
+    scope_change: "Change requested on {task_name}: {description} (by {who}). Approve as change order?"
+    clarify: "Which task do you mean? {options}"
+    silent_overdue: "{task_name} was due {date}. Done, or new date?"

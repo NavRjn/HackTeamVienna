@@ -1,0 +1,9 @@
+id,name,kind,parent_id
+B1,Wohnhaus Arsenal,building,
+F2,2. OG,floor,B1
+T5,Top 5,unit,F2
+T5-BATH,Top 5 Bad,room,T5
+T5-LIV,Top 5 Wohnzimmer,room,T5
+T6,Top 6,unit,F2
+T6-BATH,Top 6 Bad,room,T6
+T6-LIV,Top 6 Wohnzimmer,room,T6

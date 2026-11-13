@@ -1,0 +1,10 @@
+id,name,role,company,trade,phone,telegram_handle,telegram_chat_id,email,language
+P-SM,Anna Huber,site_manager,Rhein Bau GmbH,,+436600000001,,,,de
+P-DRY,Tomasz Nowak,foreman,Nowak Trockenbau,drywall,+436600000002,,,,de
+P-ELE,Marko Petrović,foreman,Elektro Petrović,electrical,+436600000003,,,,de
+P-SAN,Emre Yılmaz,foreman,Yılmaz Haustechnik,plumbing,+436600000004,,,,de
+P-INS,Klaus Berger,inspector,ÖBA Berger ZT,inspection,+436600000005,,,,de
+P-SCR,Stefan Gruber,foreman,Gruber Estrich,screed,+436600000006,,,,de
+P-TIL,Luca Bianchi,foreman,Bianchi Fliesen,tiling,+436600000007,,,,en
+P-PNT,Jana Novak,foreman,Novak Maler,painting,+436600000008,,,,de
+P-FLR,Ivana Kovač,foreman,Kovač Böden,flooring,+436600000009,,,,de
