@@ -18,7 +18,9 @@ from kraftsync.contracts import (
 
 
 class ContextRequest(BaseModel):
-    sender_ref: str = Field(min_length=1, max_length=200)   # phone / telegram id or handle / email
+    sender_name: str = Field(min_length=1, max_length=200)   # full name, e.g. "Emre Yılmaz"
+    received_at: datetime | None = None                       # message time; sets "today" unless DEMO_TODAY is set
+    text: str = Field(default="", max_length=4000)            # used to add tasks at locations named in the message
 
 
 class ContextResponse(BaseModel):
@@ -29,12 +31,14 @@ class ContextResponse(BaseModel):
 
 
 class UpdateRequest(BaseModel):
-    sender_ref: str = Field(min_length=1, max_length=200)
+    """One chat message with one or more claims about tasks. Each claim needs its own unique `message_id`
+    (e.g. "tg:123:456#1", "tg:123:456#2"): it is the idempotency key."""
+    sender_name: str = Field(min_length=1, max_length=200)
     text: str = Field(default="", max_length=4000)
     received_at: datetime
     channel: Channel = Channel.telegram
     chat_ref: str | None = None
-    update: TaskUpdate
+    updates: list[TaskUpdate] = Field(min_length=1, max_length=10)
 
 
 class Recipient(BaseModel):
@@ -44,9 +48,23 @@ class Recipient(BaseModel):
     telegram_chat_id: int | None = None
 
 
-class UpdateResponse(BaseModel):
-    status: Literal["applied", "needs_clarification", "ignored", "duplicate"]
+Status = Literal["applied", "needs_clarification", "ignored", "duplicate"]
+
+
+class ClaimResult(BaseModel):
+    message_id: str
+    status: Status
     note: str | None = None
+    events: list[GraphEvent] = Field(default_factory=list)
+    discrepancies: list[Discrepancy] = Field(default_factory=list)
+    actions: list[Action] = Field(default_factory=list)
+
+
+class UpdateResponse(BaseModel):
+    """Aggregate over all claims. `results` has the per-claim detail. n8n only needs `actions` + `recipients`."""
+    status: Status               # applied if any claim applied, else needs_clarification, else ignored, else duplicate
+    note: str | None = None
+    results: list[ClaimResult]
     events: list[GraphEvent] = Field(default_factory=list)
     discrepancies: list[Discrepancy] = Field(default_factory=list)
     actions: list[Action] = Field(default_factory=list)

@@ -4,7 +4,9 @@ State = plan.json + replay(events). Events are only ever appended (reset truncat
 """
 
 import json
+import re
 import threading
+import unicodedata
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -26,8 +28,14 @@ NEAR_DAYS = 7
 MAX_CANDIDATES = 15
 
 
-def _norm(value: Any) -> str:
-    return str(value).strip().lower().lstrip("@+").replace(" ", "")
+def _norm_name(name: str) -> str:
+    """Case-, accent- and whitespace-insensitive: 'Marko  PETROVIC' == 'Marko Petrović'."""
+    folded = unicodedata.normalize("NFKD", name).casefold()
+    return " ".join("".join(c for c in folded if not unicodedata.combining(c)).split())
+
+
+def _tokens(text: str) -> set[str]:
+    return set(re.findall(r"\w+", _norm_name(text)))
 
 
 class ProjectState:
@@ -70,29 +78,45 @@ class ProjectState:
 
     # -- lookups ---------------------------------------------------------------------------
 
-    def resolve_sender(self, ref: str) -> Person | None:
-        r = _norm(ref)
-        for p in self.persons.values():
-            if any(c is not None and _norm(c) == r for c in (p.phone, p.telegram_handle, p.telegram_chat_id, p.email)):
-                return p
-        return None
+    def resolve_sender(self, full_name: str) -> Person | None:
+        """Identify a sender by full name only (synthetic names in the demo; ids/phones are not used)."""
+        wanted = _norm_name(full_name)
+        return next((p for p in self.persons.values() if _norm_name(p.name) == wanted), None)
 
     def has_message(self, message_id: str) -> bool:
         return any(e.kind == EventKind.update_interpreted and e.source_message_id == message_id for e in self.events)
 
-    def candidates_for(self, person_id: str | None, today: date) -> list[Task]:
-        """Deterministic shortlist for the LLM: the sender's own open tasks first, then anything near today."""
-        person = self.persons.get(person_id) if person_id else None
+    def _locations_mentioned(self, text: str) -> set[str]:
+        """Location ids whose name words all appear in the text (plus all their descendants)."""
+        words = _tokens(text)
+        hit = {loc.id for loc in self.plan.locations if _tokens(loc.name) <= words}
+        grew = True
+        while grew:   # add children of mentioned locations
+            kids = {loc.id for loc in self.plan.locations if loc.parent_id in hit} - hit
+            grew = bool(kids)
+            hit |= kids
+        return hit
 
-        def own(t: Task) -> bool:
-            return bool(person) and (t.responsible_person_id == person.id or (person.trade and t.trade == person.trade))
+    def candidates_for(self, person_id: str | None, today: date, text: str = "") -> list[Task]:
+        """Deterministic shortlist for the LLM: the sender's own open tasks first, then tasks at locations
+        named in the message, then anything near today."""
+        person = self.persons.get(person_id) if person_id else None
+        mentioned = self._locations_mentioned(text) if text else set()
+
+        def own_open(t: Task) -> bool:
+            return bool(person) and t.status != TaskStatus.done and (
+                t.responsible_person_id == person.id or bool(person.trade and t.trade == person.trade))
 
         def near(t: Task) -> bool:
             dates = [t.planned_start, t.planned_finish, t.actual_start, t.actual_finish]
             return any(d is not None and abs((d - today).days) <= NEAR_DAYS for d in dates)
 
-        pool = [t for t in self.tasks.values() if t.status != TaskStatus.cancelled and (own(t) and t.status != TaskStatus.done or near(t))]
-        pool.sort(key=lambda t: (not (own(t) and t.status != TaskStatus.done), t.status == TaskStatus.done, t.planned_start))
+        def named(t: Task) -> bool:
+            return t.location_id in mentioned
+
+        pool = [t for t in self.tasks.values()
+                if t.status != TaskStatus.cancelled and (own_open(t) or named(t) or near(t))]
+        pool.sort(key=lambda t: (not own_open(t), not named(t), t.status == TaskStatus.done, t.planned_start))
         return pool[:MAX_CANDIDATES]
 
     # -- writes (append-only) ---------------------------------------------------------------

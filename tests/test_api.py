@@ -32,15 +32,23 @@ def gold_messages():
     return [json.loads(line) for line in (DEMO / "messages.jsonl").read_text(encoding="utf-8").splitlines()]
 
 
-def body(m, confidence=0.95):
+PERSONS = {p["id"]: p["name"] for p in json.loads((DEMO / "plan.json").read_text(encoding="utf-8"))["persons"]}
+
+
+def claim(m, confidence=0.95, suffix=""):
     g = m["gold"]
-    update = {
-        "message_id": m["id"], "task_id": g["task_id"], "kind": g["kind"], "confidence": confidence,
+    return {
+        "message_id": m["id"] + suffix, "task_id": g["task_id"], "kind": g["kind"], "confidence": confidence,
         "reported_on": "2026-11-09", "new_forecast_finish": g.get("new_forecast_finish"),
         "blocker": g.get("blocker"), "change_description": g.get("change_description"),
         "rationale": "test", "model": "gold",
     }
-    return {"sender_ref": m["sender_ref"], "text": m["text"], "received_at": m["received_at"], "update": update}
+
+
+def body(m, confidence=0.95):
+    name = PERSONS.get(m["gold"]["sender_person_id"], "Unbekannte Person")
+    return {"sender_name": name, "text": m["text"], "received_at": m["received_at"],
+            "updates": [claim(m, confidence)]}
 
 
 def test_settings_refuse_weak_token():
@@ -60,17 +68,61 @@ def test_auth_required_except_health(client):
 
 
 def test_context_returns_senders_candidates(client):
-    r = client.post("/context", json={"sender_ref": "+436600000002"}, headers=H).json()
+    r = client.post("/context", json={"sender_name": "Tomasz Nowak"}, headers=H).json()
     assert r["person"]["id"] == "P-DRY"
     ids = [t["id"] for t in r["candidates"]]
     assert "T6-BOARD" in ids and len(ids) <= 15
-    assert client.post("/context", json={"sender_ref": "+43999"}, headers=H).json()["person"] is None
+    assert client.post("/context", json={"sender_name": "Nobody Known"}, headers=H).json()["person"] is None
+
+
+def test_sender_name_matching_ignores_case_accents_whitespace(client):
+    for name in ("marko petrovic", "  MARKO   Petrović ", "Marko Petrović"):
+        r = client.post("/context", json={"sender_name": name}, headers=H).json()
+        assert r["person"]["id"] == "P-ELE", name
+    assert client.post("/context", json={"sender_name": "Marko"}, headers=H).json()["person"] is None   # full names only
+
+
+def test_context_adds_tasks_at_locations_named_in_the_message(client):
+    # the site manager owns no trade tasks; naming the bathroom pulls in its tasks
+    plain = client.post("/context", json={"sender_name": "Anna Huber"}, headers=H).json()
+    named = client.post("/context", json={"sender_name": "Anna Huber", "text": "Wasserschaden im Bad Top 6"},
+                        headers=H).json()
+    wanted = {"T6-PLUMB-RI", "T6-WATERPROOF", "T6-TILE", "T6-SAN-FF"}
+    assert wanted <= {t["id"] for t in named["candidates"]}
+    assert not wanted <= {t["id"] for t in plain["candidates"]}
+    assert len(named["candidates"]) <= 15
+
+
+def test_today_comes_from_message_date_unless_demo_today_is_set(tmp_path, hooks):
+    s = Settings(token=TOKEN, events_path=tmp_path / "e.jsonl")   # no DEMO_TODAY
+    c = TestClient(create_app(s))
+    r = c.post("/context", json={"sender_name": "Anna Huber", "received_at": "2026-11-20T08:00:00+01:00"}, headers=H)
+    assert r.json()["today"] == "2026-11-20"
+    s2 = Settings(token=TOKEN, events_path=tmp_path / "e2.jsonl", demo_today=date(2026, 11, 9))
+    c2 = TestClient(create_app(s2))
+    r = c2.post("/context", json={"sender_name": "Anna Huber", "received_at": "2026-11-20T08:00:00+01:00"}, headers=H)
+    assert r.json()["today"] == "2026-11-09"
+
+
+def test_one_message_can_carry_several_claims(client, hooks):
+    ms = {m["id"]: m for m in gold_messages()}
+    b = body(ms["demo:02"])   # plumber: delay on T6-PLUMB-RI ...
+    b["updates"].append({**claim(ms["demo:02"], suffix="#2"), "task_id": "T5-PLUMB-RI", "kind": "progress",
+                         "new_forecast_finish": None})   # ... plus a harmless claim about another task
+    r = client.post("/updates", json=b, headers=H).json()
+    assert [x["status"] for x in r["results"]] == ["applied", "applied"]
+    assert [d["type"] for d in r["discrepancies"]] == ["delay"]
+    assert {a["to_person_id"] for a in r["actions"]} == {"P-INS", "P-DRY", "P-SM"}
+    assert len(hooks) == 1
+    # claims need distinct ids
+    b["updates"][1]["message_id"] = b["updates"][0]["message_id"]
+    assert client.post("/updates", json=b, headers=H).status_code == 422
 
 
 def test_unknown_task_id_is_rejected(client):
     m = gold_messages()[0]
     b = body(m)
-    b["update"]["task_id"] = "T6-INVENTED"
+    b["updates"][0]["task_id"] = "T6-INVENTED"
     assert client.post("/updates", json=b, headers=H).status_code == 422
 
 

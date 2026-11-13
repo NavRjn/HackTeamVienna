@@ -13,6 +13,7 @@ import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 
 from kraftsync.app.api_models import (
+    ClaimResult,
     ConflictHook,
     ContextRequest,
     ContextResponse,
@@ -24,7 +25,7 @@ from kraftsync.app.api_models import (
 )
 from kraftsync.app.settings import Settings
 from kraftsync.app.state import ProjectState
-from kraftsync.contracts import Action, EventKind, GraphEvent, UpdateKind
+from kraftsync.contracts import Action, EventKind, GraphEvent, TaskUpdate, UpdateKind
 from kraftsync.engine.check import check, forecast, project_finish
 from kraftsync.engine.resolve import ask_clarification, resolve_all
 
@@ -60,8 +61,9 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
         openapi_url="/openapi.json" if docs_on else None,
     )
 
-    def today() -> date:
-        return settings.demo_today or date.today()
+    def today(received_at: datetime | None = None) -> date:
+        """DEMO_TODAY (stage override) wins; else the message date; else the real date."""
+        return settings.demo_today or (received_at.date() if received_at else date.today())
 
     def now() -> datetime:
         return datetime.now().astimezone()
@@ -78,37 +80,25 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
                 person_id=p.id, name=p.name, telegram_chat_id=settings.redirect_chat_id or p.telegram_chat_id)
         return out, recipients
 
-    def process(req: UpdateRequest) -> UpdateResponse:
-        u, t = req.update, now()
+    def process_claim(u: TaskUpdate, req: UpdateRequest, sender, t: datetime, day: date) -> ClaimResult:
         if state.has_message(u.message_id):
-            return UpdateResponse(status="duplicate")
-        if u.task_id is not None and u.task_id not in state.tasks:
-            raise HTTPException(422, f"unknown task_id {u.task_id!r}; choose from /context candidates")
-        if u.new_forecast_finish and abs((u.new_forecast_finish - today()).days) > MAX_FORECAST_DAYS:
-            raise HTTPException(422, "new_forecast_finish is implausibly far from today")
-
-        sender = state.resolve_sender(req.sender_ref)
+            return ClaimResult(message_id=u.message_id, status="duplicate")
         actor = sender.id if sender else "unknown"
-        events: list[GraphEvent] = [
-            state.log(EventKind.message_received, actor, t, source_message_id=u.message_id,
-                      payload={"channel": req.channel.value, "chat_ref": req.chat_ref, "text": req.text}),
-        ]
         interpreted = state.log(EventKind.update_interpreted, actor, t, task_id=u.task_id,
-                                source_message_id=u.message_id,
-                                payload={"update": u.model_dump(mode="json")})
-        events.append(interpreted)
+                                source_message_id=u.message_id, payload={"update": u.model_dump(mode="json")})
+        events: list[GraphEvent] = [interpreted]
+
+        def done(status, note=None, **kw) -> ClaimResult:
+            return ClaimResult(message_id=u.message_id, status=status, note=note, events=events, **kw)
 
         if u.kind in (UpdateKind.irrelevant, UpdateKind.question):
-            return UpdateResponse(status="ignored", note=f"{u.kind.value}: nothing to apply", events=events)
+            return done("ignored", f"{u.kind.value}: nothing to apply")
         if sender is None:
-            return UpdateResponse(status="ignored", note="unknown sender", events=events)
-
+            return done("ignored", "unknown sender")
         if u.task_id is None or u.confidence < settings.confidence_min:
-            options = [state.tasks[i] for i in u.candidate_task_ids if i in state.tasks] \
-                or state.candidates_for(sender.id, today())
-            actions, recipients = finalize([ask_clarification(sender, options, u.message_id, t)])
-            return UpdateResponse(status="needs_clarification", note="low confidence or no task",
-                                  events=events, actions=actions, recipients=recipients)
+            options = [state.tasks[i] for i in u.candidate_task_ids if i in state.tasks]                 or state.candidates_for(sender.id, day, req.text)
+            return done("needs_clarification", "low confidence or no task",
+                        actions=[ask_clarification(sender, options, u.message_id, t)])
 
         before = dict(state.tasks)
         changed = state.apply(u, actor, t)
@@ -118,10 +108,42 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
                  for d in check(before, state.tasks, state.deps, u, t)]
         for d in found:
             events.append(state.record_discrepancy(d, t))
-        actions, recipients = finalize(
-            resolve_all(found, before, state.tasks, state.deps, state.persons, u, sender, t))
-        return UpdateResponse(status="applied", events=events, discrepancies=found,
-                              actions=actions, recipients=recipients)
+        return done("applied", discrepancies=found,
+                    actions=resolve_all(found, before, state.tasks, state.deps, state.persons, u, sender, t))
+
+    def process(req: UpdateRequest) -> UpdateResponse:
+        ids = [u.message_id for u in req.updates]
+        if len(set(ids)) != len(ids):
+            raise HTTPException(422, "each claim needs its own unique message_id")
+        day = today(req.received_at)
+        for u in req.updates:
+            if u.task_id is not None and u.task_id not in state.tasks:
+                raise HTTPException(422, f"unknown task_id {u.task_id!r}; choose from /context candidates")
+            if u.new_forecast_finish and abs((u.new_forecast_finish - day).days) > MAX_FORECAST_DAYS:
+                raise HTTPException(422, "new_forecast_finish is implausibly far from today")
+
+        t = now()
+        sender = state.resolve_sender(req.sender_name)
+        fresh = [u for u in req.updates if not state.has_message(u.message_id)]
+        message_event = None
+        if fresh:   # the raw message is logged once, even if it carries several claims
+            message_event = state.log(
+                EventKind.message_received, sender.id if sender else "unknown", t,
+                source_message_id=fresh[0].message_id,
+                payload={"channel": req.channel.value, "chat_ref": req.chat_ref, "text": req.text})
+        results = [process_claim(u, req, sender, t, day) for u in req.updates]
+
+        order = ["applied", "needs_clarification", "ignored", "duplicate"]
+        recipients: dict[str, Recipient] = {}
+        for r in results:
+            r.actions, rec = finalize(r.actions)
+            recipients |= rec
+        return UpdateResponse(
+            status=min((r.status for r in results), key=order.index),
+            results=results,
+            events=([message_event] if message_event else []) + [e for r in results for e in r.events],
+            discrepancies=[d for r in results for d in r.discrepancies],
+            actions=[a for r in results for a in r.actions], recipients=recipients)
 
     @app.get("/health")
     def health() -> dict:
@@ -131,11 +153,12 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
 
     @app.post("/context", response_model=ContextResponse, dependencies=[api])
     def context(req: ContextRequest) -> ContextResponse:
-        # POST (not GET) so phone numbers / ids never end up in URLs or access logs
+        # POST (not GET) so names and message text never end up in URLs or access logs
         with state.lock:
-            person = state.resolve_sender(req.sender_ref)
-            return ContextResponse(person=person, today=today(),
-                                   candidates=state.candidates_for(person.id if person else None, today()))
+            person = state.resolve_sender(req.sender_name)
+            day = today(req.received_at)
+            return ContextResponse(person=person, today=day,
+                                   candidates=state.candidates_for(person.id if person else None, day, req.text))
 
     @app.post("/updates", response_model=UpdateResponse, dependencies=[api])
     def updates(req: UpdateRequest, background: BackgroundTasks) -> UpdateResponse:
@@ -143,7 +166,7 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
             resp = process(req)
         if settings.webhook_url and (resp.discrepancies or resp.actions):
             background.add_task(post_hook, settings.webhook_url, settings.webhook_token, ConflictHook(
-                message_id=req.update.message_id, discrepancies=resp.discrepancies,
+                message_id=req.updates[0].message_id, discrepancies=resp.discrepancies,
                 actions=resp.actions, recipients=resp.recipients))
         return resp
 
