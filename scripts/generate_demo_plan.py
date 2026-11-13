@@ -16,7 +16,7 @@ from pathlib import Path
 import networkx as nx
 
 from kraftsync.contracts import (
-    Dependency, DependencyType, Location, LocationKind, Person, ProjectPlan,
+    Dependency, DependencyType, Location, LocationKind, JobTitle, Person, ProjectPlan,
     Role, Task, TaskKind, TaskStatus,
 )
 
@@ -25,14 +25,14 @@ PROJECT_START = date(2026, 11, 2)   # Monday
 DATA_DATE = date(2026, 11, 9)       # "today" in the demo story (Monday)
 
 persons = [
-    Person(id="P-SM", name="Anna Huber", role=Role.site_manager, company="Rhein Bau GmbH", phone="+436600000001", language="de"),
-    Person(id="P-DRY", name="Tomasz Nowak", role=Role.foreman, company="Nowak Trockenbau", trade="drywall", phone="+436600000002", language="de"),
-    Person(id="P-ELE", name="Marko Petrović", role=Role.foreman, company="Elektro Petrović", trade="electrical", phone="+436600000003", language="de"),
-    Person(id="P-SAN", name="Emre Yılmaz", role=Role.foreman, company="Yılmaz Haustechnik", trade="plumbing", phone="+436600000004", language="de"),
-    Person(id="P-INS", name="Klaus Berger", role=Role.inspector, company="ÖBA Berger ZT", trade="inspection", phone="+436600000005", language="de"),
+    Person(id="P-SM", job_title=JobTitle.SUPERINTENDENT, name="Anna Huber", role=Role.site_manager, company="Rhein Bau GmbH", phone="+436600000001", language="de"),
+    Person(id="P-DRY", job_title=JobTitle.DRYWALLER, name="Tomasz Nowak", role=Role.foreman, company="Nowak Trockenbau", trade="drywall", phone="+436600000002", language="de"),
+    Person(id="P-ELE", job_title=JobTitle.ELECTRICIAN, name="Marko Petrović", role=Role.foreman, company="Elektro Petrović", trade="electrical", phone="+436600000003", language="de"),
+    Person(id="P-SAN", job_title=JobTitle.PLUMBER, name="Emre Yılmaz", role=Role.foreman, company="Yılmaz Haustechnik", trade="plumbing", phone="+436600000004", language="de"),
+    Person(id="P-INS", job_title=JobTitle.INSPECTOR, name="Klaus Berger", role=Role.inspector, company="ÖBA Berger ZT", trade="inspection", phone="+436600000005", language="de"),
     Person(id="P-SCR", name="Stefan Gruber", role=Role.foreman, company="Gruber Estrich", trade="screed", phone="+436600000006", language="de"),
     Person(id="P-TIL", name="Luca Bianchi", role=Role.foreman, company="Bianchi Fliesen", trade="tiling", phone="+436600000007", language="en"),
-    Person(id="P-PNT", name="Jana Novak", role=Role.foreman, company="Novak Maler", trade="painting", phone="+436600000008", language="de"),
+    Person(id="P-PNT", job_title=JobTitle.PAINTER, name="Jana Novak", role=Role.foreman, company="Novak Maler", trade="painting", phone="+436600000008", language="de"),
     Person(id="P-FLR", name="Ivana Kovač", role=Role.foreman, company="Kovač Böden", trade="flooring", phone="+436600000009", language="de"),
 ]
 
