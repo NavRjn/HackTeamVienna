@@ -80,3 +80,27 @@ See `01-architecture` → Public interfaces (`ProjectGraph`).
 - Demo message 2 (plumbing delay to 13 Nov) → handover milestone moves and `T6-INSP`, `T6-BOARD`, … are in `affected_task_ids`.
 - Demo message 5 (T6-BOARD started) → `out_of_sequence` + `hold_point_violation`.
 - Replaying the full event log reproduces identical state.
+
+## Implementation (status)
+
+| File | What |
+|---|---|
+| `kraftsync/graph/store.py` | `EventStore`: SQLite, append-only (`":memory:"` in tests), one locked connection (thread-safe reads + writes) |
+| `kraftsync/graph/cpm.py` | `Net.compile()` (topological order + adjacency lists, built once) and the forward/backward pass |
+| `kraftsync/graph/project_graph.py` | `ProjectGraph`: `from_plan`, `apply`, `detect`, `check_overdue`, `schedule`, `critical_path`, `downstream`, `upstream`, `candidates_for`, `snapshot` |
+| `kraftsync/graph/feed.py` | `read_reports` / `feed`: apply already-interpreted JSONL lines (history, gold labels, manual updates). Not the engine. |
+| `data/demo/history.jsonl` | what happened 2-9 Nov, as messages. `plan.json` itself is the untouched baseline (data_date 2 Nov, nothing started). |
+| `tests/test_graph.py` | the "Done when" cases, the whole demo chat against its gold `expected_discrepancies`, CPM edge cases |
+
+**Demo state = baseline plan + history.jsonl + messages.jsonl, all through `apply()`.** Progress is never baked into `plan.json`. After the history, CPM reproduces every planned date (tested).
+
+Rules implemented: `delay`, `out_of_sequence`, `hold_point_violation`, `blocked`, `scope_change`, `unknown_task`, `silent_overdue` (`check_overdue()`, call it on a timer; at most once per task per day; info, warning after 2 days). Not yet: `conflicting_reports`.
+
+Decisions (deterministic, tested):
+- Below `CONFIDENCE_MIN` nothing is applied **and nothing is raised** (this includes scope changes). `unknown_task` is still raised so the policy can ask the sender.
+- `progress` on a task that has not started, with no `%`, is a confirmation ("screed is fine for Thursday"), not a start. Only `started` (or a `progress` that has a `%`) sets `actual_start`.
+- out_of_sequence / hold_point are checked only when the status changes, so later progress reports do not raise the same alert again.
+- A task started out of sequence still cannot finish before its unfinished FS/FF predecessors. Behind an **open hold point** the work counts as redone after the inspection (finish >= inspection + duration). So starting early never makes the forecast look better.
+- A `done` task with only `actual_finish` gets start = finish - duration + 1.
+
+Efficiency: the structure is compiled once; the schedule is cached until the state or `today` changes; one `apply()` + `detect()` = one CPM pass, O(V+E) over plain lists. `snapshot()` is cached and only re-serialises tasks that changed. Measured on a synthetic 2,601 tasks / 3,595 dependencies: 100 x (apply + detect + snapshot) took 301 ms each before, 61 ms each now. The demo plan (26 tasks) takes well under 1 ms.

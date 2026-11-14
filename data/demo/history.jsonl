@@ -1,0 +1,13 @@
+{"id": "hist:01", "date": "2026-11-02", "sender": "P-DRY", "text": "Top 5 Ständerwerk angefangen", "task_id": "T5-FRAME", "kind": "started"}
+{"id": "hist:02", "date": "2026-11-04", "sender": "P-DRY", "text": "Top 5 Ständerwerk fertig", "task_id": "T5-FRAME", "kind": "completed"}
+{"id": "hist:03", "date": "2026-11-05", "sender": "P-ELE", "text": "Top 5 Elektro Rohinstallation begonnen", "task_id": "T5-ELEC-RI", "kind": "started"}
+{"id": "hist:04", "date": "2026-11-05", "sender": "P-SAN", "text": "Top 5 Sanitär Rohinstallation begonnen", "task_id": "T5-PLUMB-RI", "kind": "started"}
+{"id": "hist:05", "date": "2026-11-05", "sender": "P-DRY", "text": "Top 6 Ständerwerk angefangen", "task_id": "T6-FRAME", "kind": "started"}
+{"id": "hist:06", "date": "2026-11-07", "sender": "P-ELE", "text": "Top 5 Elektro Rohinstallation fertig", "task_id": "T5-ELEC-RI", "kind": "completed"}
+{"id": "hist:07", "date": "2026-11-07", "sender": "P-SAN", "text": "Top 5 Sanitär Rohinstallation fertig", "task_id": "T5-PLUMB-RI", "kind": "completed"}
+{"id": "hist:08", "date": "2026-11-07", "sender": "P-DRY", "text": "Top 6 Ständerwerk fertig", "task_id": "T6-FRAME", "kind": "completed"}
+{"id": "hist:09", "date": "2026-11-08", "sender": "P-INS", "text": "Abnahme Installationen Top 5 ok", "task_id": "T5-INSP", "kind": "completed"}
+{"id": "hist:10", "date": "2026-11-08", "sender": "P-SM", "text": "Gipskartonplatten für das 2. OG geliefert", "task_id": "F2-DEL-BOARDS", "kind": "completed"}
+{"id": "hist:11", "date": "2026-11-08", "sender": "P-ELE", "text": "Top 6 Elektro Rohinstallation begonnen", "task_id": "T6-ELEC-RI", "kind": "started", "percent_complete": 50}
+{"id": "hist:12", "date": "2026-11-08", "sender": "P-SAN", "text": "Top 6 Sanitär Rohinstallation begonnen", "task_id": "T6-PLUMB-RI", "kind": "started", "percent_complete": 50}
+{"id": "hist:13", "date": "2026-11-09", "sender": "P-DRY", "text": "Top 5 Beplankung begonnen", "task_id": "T5-BOARD", "kind": "started", "percent_complete": 50}
