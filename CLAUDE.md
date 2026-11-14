@@ -60,7 +60,7 @@ uv run pytest -q                                # all tests (includes the demo r
 uv run python -m kraftsync.app.serve            # local API for n8n (LAN; token + random port generated into .env on first run)
 uv run python -m kraftsync.app.serve --reload   # same, restarts on code/yaml changes
 uv run python -m kraftsync.app.serve --init     # only create token/port in .env and print them
-cloudflared tunnel --url http://127.0.0.1:<KRAFTSYNC_PORT>   # https URL for n8n Cloud (changes on restart)
+uv run python scripts/tunnel.py                # https tunnel for n8n Cloud: starts cloudflared, checks the token lock, prints KRAFTSYNC_BASE_URL (quick tunnel URL changes on restart)
 uv run python scripts/generate_demo_plan.py     # regenerate data/demo/* (WIPES the telegram ids typed into persons.csv)
 uv run python scripts/generate_demo_sources.py  # regenerate data/demo/sources/ (CSV + PDF) from plan.json
 ```

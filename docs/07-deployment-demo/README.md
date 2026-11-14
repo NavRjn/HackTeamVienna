@@ -15,8 +15,13 @@ Start the service (always through this entry point):
 uv run python -m kraftsync.app.serve            # run
 uv run python -m kraftsync.app.serve --reload   # dev: restart on code/yaml changes
 uv run python -m kraftsync.app.serve --init     # only create token/port in .env and print them
-cloudflared tunnel --url http://127.0.0.1:<KRAFTSYNC_PORT>   # prints https://<random>.trycloudflare.com
+uv run python scripts/tunnel.py                 # second terminal, leave open: https tunnel for n8n Cloud
 ```
+
+### Tunnel (`scripts/tunnel.py`)
+Install once: `winget install --id Cloudflare.cloudflared` (macOS: `brew install cloudflared`). The script finds cloudflared (PATH, the default Windows install folder, or `CLOUDFLARED=<path>`) and checks that the service answers locally. It starts a quick tunnel, reads the `https://<random>.trycloudflare.com` URL, and **checks through the tunnel** that `/health` is ok, `/state` without the token gets `401`, and with the token gets `200`. Only then does it print what to set in n8n (`KRAFTSYNC_BASE_URL` and the `X-KraftSync-Token` header). The token is masked so it is safe on a projector; `--show-token` prints it in full. The URL is also saved as `KRAFTSYNC_PUBLIC_URL` in `.env`. Ctrl+C stops the tunnel.
+
+Stable URL instead (so n8n never needs updating): a named tunnel needs a free Cloudflare account and a domain on Cloudflare. Set it up once with `cloudflared tunnel login`, `cloudflared tunnel create kraftsync` and `cloudflared tunnel route dns kraftsync kraftsync.<domain>`. Then put `CLOUDFLARED_TUNNEL_NAME=kraftsync` and `KRAFTSYNC_PUBLIC_URL=https://kraftsync.<domain>` in `.env`; the same script runs it with the same checks.
 First run generates `KRAFTSYNC_TOKEN` and a random `KRAFTSYNC_PORT` into the gitignored `.env`, so the local URL stays stable. The **tunnel URL changes every time the tunnel restarts**; update the n8n variable `KRAFTSYNC_BASE_URL`. The service binds all interfaces by default (teammates on the same Wi-Fi can reach it); set `KRAFTSYNC_HOST=127.0.0.1` to keep it local.
 
 ### Logs
