@@ -4,6 +4,8 @@ The site chat becomes a live construction schedule. Every "done", "late" or "we 
 
 Building Better Worlds Hackathon, Vienna 2026 · Track 01 · Talona — *Context for the Physical World*.
 
+**Live dashboard:** **https://volunteers-router-transmit-clients.trycloudflare.com**. It shows the demo project's dependency graph, open discrepancies and event feed, and updates as site messages come in. It is served from the team laptop through a Cloudflare quick tunnel, so it is reachable only while the demo is running, and the address changes whenever the tunnel restarts.
+
 > **The one rule: AI interprets, the graph decides.** The LLM (inside n8n) only turns a chat message into a structured claim. Everything after that — dates, ripple, conflicts, who gets told — is deterministic, tested Python.
 
 ## What it does, in one example
