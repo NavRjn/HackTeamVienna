@@ -56,9 +56,20 @@ Successful `GET /health`, `/state`, `/events` are not logged (UI polling would b
 | GET | `/events?since=<id>` | append-only event log tail (UI feed) |
 | GET | `/actions?status=open` | the outbox: messages the service wants sent. `open` (default) = drafted + failed; also `drafted`, `sent`, `failed`, `all` |
 | POST | `/actions/result` | the sender reports delivery of one action: `sent` or `failed` |
+| GET | `/documents` | authenticated project document metadata |
+| POST | `/documents` | authenticated multipart upload; stores immutable revision |
+| GET | `/documents/{id}/content` | authenticated download (`?inline=true` for preview) |
 | POST | `/reset` | back to the static baseline: clear the live events, outbox and snapshot (demo only) |
 
 Both n8n calls are POSTs so names and message text never appear in URLs or logs.
+
+## Live runtime files
+The service writes append-only events, the derived `graph.json` snapshot, and its compact call log under `LIVE_DIR` (default `data/live/`). The directory is git-ignored. A legacy `EVENTS_PATH` value remains honored for existing installations.
+
+`GET /actions?status=all` returns drafted, sent, and failed notifications with recipient and detail. The default `status=open` returns drafted and failed actions. `/actions/result` records delivery status as append-only events.
+
+## Project documents
+Files are stored under the ignored `data/documents/` directory, with metadata in `metadata.json` and generated UUID filenames for content. Original filenames are metadata only; revisions append and never overwrite. Uploads are limited to 100 MB and validated by category, extension, and basic file signature. Categories are `bim_models` (IFC), `drawings_plans` (PDF/JPG/PNG), `schedules` (CSV/XLSX), and `financial_documents` (PDF). Optional multipart fields are `revision_label`, `location_ref`, and `task_ref`. Uploads do not alter project schedules.
 
 ### POST /context
 ```json

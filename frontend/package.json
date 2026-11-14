@@ -1,0 +1,20 @@
+{
+  "name": "kraftsync-frontend",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "prestart": "npm run build",
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --check build.mjs && node --check public/dashboard.js && node --check public/graph.js && node --check public/data.js && node --check public/bim-viewer.js",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "three": "^0.149.0",
+    "web-ifc-three": "^0.0.126"
+  }
+}

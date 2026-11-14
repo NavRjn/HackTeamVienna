@@ -326,3 +326,4 @@ cython_debug/
 data/events.jsonl
 data/kraftsync.log
 data/live/
+data/documents/
