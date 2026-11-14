@@ -324,3 +324,4 @@ cython_debug/
 
 # local runtime state
 data/events.jsonl
+data/live/

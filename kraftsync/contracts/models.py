@@ -209,6 +209,7 @@ class EventKind(str, Enum):
     task_changed = "task_changed"
     discrepancy_raised = "discrepancy_raised"
     discrepancy_resolved = "discrepancy_resolved"
+    action_drafted = "action_drafted"
     action_sent = "action_sent"
     manual_override = "manual_override"
 

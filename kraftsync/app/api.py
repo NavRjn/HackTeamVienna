@@ -7,16 +7,21 @@ Contract: docs/api.md. No `from __future__ import annotations` on purpose (FastA
 
 import logging
 import secrets
+import time
 from datetime import date, datetime
+from pathlib import Path
+from typing import Literal
 
 import httpx
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 
 from kraftsync.app.api_models import (
     ClaimResult,
     ConflictHook,
     ContextRequest,
     ContextResponse,
+    ActionOut,
+    ActionResultRequest,
     Recipient,
     StateResponse,
     TaskView,
@@ -25,7 +30,7 @@ from kraftsync.app.api_models import (
 )
 from kraftsync.app.settings import Settings
 from kraftsync.app.state import ProjectState
-from kraftsync.contracts import Action, EventKind, GraphEvent, TaskUpdate, UpdateKind
+from kraftsync.contracts import Action, ActionStatus, EventKind, GraphEvent, TaskUpdate, UpdateKind
 from kraftsync.engine.check import check, forecast, project_finish
 from kraftsync.engine.resolve import ask_clarification, resolve_all
 
@@ -47,7 +52,16 @@ def post_hook(url: str, token: str | None, hook: ConflictHook) -> None:
 def create_app(settings: Settings | None = None, state: ProjectState | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     settings.validate()
-    state = state or ProjectState(settings.plan_path, settings.events_path)
+    if settings.log_path:
+        settings.log_path.parent.mkdir(parents=True, exist_ok=True)
+        logger = logging.getLogger("kraftsync")
+        logger.setLevel(logging.INFO)
+        if not any(isinstance(handler, logging.FileHandler) and
+                   Path(handler.baseFilename) == settings.log_path.resolve() for handler in logger.handlers):
+            handler = logging.FileHandler(settings.log_path, encoding="utf-8")
+            handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%Y-%m-%d %H:%M:%S"))
+            logger.addHandler(handler)
+    state = state or ProjectState(settings.plan_path, settings.events_path, settings.snapshot_path)
     token = settings.token.encode()
     docs_on = settings.docs and settings.loopback
 
@@ -61,12 +75,47 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
         openapi_url="/openapi.json" if docs_on else None,
     )
 
+    @app.middleware("http")
+    async def call_log(request: Request, call_next):
+        started = time.perf_counter()
+        response = await call_next(request)
+        if not (request.method == "GET" and request.url.path in {"/health", "/state", "/events"}
+                and response.status_code < 400):
+            logging.getLogger("kraftsync").info("%s %s %d %dms", request.method, request.url.path,
+                                                  response.status_code,
+                                                  int((time.perf_counter() - started) * 1000))
+        return response
+
     def today(received_at: datetime | None = None) -> date:
         """DEMO_TODAY (stage override) wins; else the message date; else the real date."""
         return settings.demo_today or (received_at.date() if received_at else date.today())
 
     def now() -> datetime:
         return datetime.now().astimezone()
+
+    def build_state() -> StateResponse:
+        fc = forecast(state.tasks, state.deps)
+        views = [TaskView(**task.model_dump(), cpm_start=fc[task.id][0], cpm_finish=fc[task.id][1])
+                 for task in state.tasks.values()]
+        baseline = {task.id: task for task in state.plan.tasks}
+        return StateResponse(
+            project_id=state.plan.project_id, name=state.plan.name, today=today(),
+            project_finish_planned=project_finish(forecast(baseline, state.deps), baseline, state.deps),
+            project_finish_forecast=project_finish(fc, state.tasks, state.deps),
+            tasks=views, dependencies=state.deps, open_discrepancies=list(state.discrepancies))
+
+    def persist() -> None:
+        try:
+            state.write_snapshot(build_state().model_dump_json(indent=2))
+        except OSError as exc:
+            log.warning("snapshot write failed: %s", type(exc).__name__)
+
+    def action_out(action: Action) -> ActionOut:
+        person = state.persons[action.to_person_id]
+        return ActionOut(**action.model_dump(),
+                         recipient=Recipient(person_id=person.id, name=person.name,
+                                             telegram_chat_id=settings.redirect_chat_id or person.telegram_chat_id),
+                         detail=state.action_detail.get(action.id))
 
     def finalize(actions: list[Action]) -> tuple[list[Action], dict[str, Recipient]]:
         """Attach chat ids; in stage mode redirect everything to one chat, prefixed with the real recipient."""
@@ -164,6 +213,10 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
     def updates(req: UpdateRequest, background: BackgroundTasks) -> UpdateResponse:
         with state.lock:
             resp = process(req)
+            for update, result in zip(req.updates, resp.results):
+                for action in result.actions:
+                    state.draft_action(action, update.message_id, now())
+            persist()
         if settings.webhook_url and (resp.discrepancies or resp.actions):
             background.add_task(post_hook, settings.webhook_url, settings.webhook_token, ConflictHook(
                 message_id=req.updates[0].message_id, discrepancies=resp.discrepancies,
@@ -173,15 +226,26 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
     @app.get("/state", response_model=StateResponse, dependencies=[api])
     def get_state() -> StateResponse:
         with state.lock:
-            fc = forecast(state.tasks, state.deps)
-            views = [TaskView(**t.model_dump(), cpm_start=fc[t.id][0], cpm_finish=fc[t.id][1])
-                     for t in state.tasks.values()]
-            base = {t.id: t for t in state.plan.tasks}
-            return StateResponse(
-                project_id=state.plan.project_id, name=state.plan.name, today=today(),
-                project_finish_planned=project_finish(forecast(base, state.deps), base, state.deps),
-                project_finish_forecast=project_finish(fc, state.tasks, state.deps),
-                tasks=views, dependencies=state.deps, open_discrepancies=list(state.discrepancies))
+            return build_state()
+
+    @app.get("/actions", response_model=list[ActionOut], dependencies=[api])
+    def get_actions(status: Literal["open", "drafted", "sent", "failed", "all"] = "open") -> list[ActionOut]:
+        wanted = {"open": {ActionStatus.drafted, ActionStatus.failed},
+                  "all": set(ActionStatus)}.get(status) or {ActionStatus(status)}
+        with state.lock:
+            return [action_out(action) for action in state.actions.values() if action.status in wanted]
+
+    @app.post("/actions/result", response_model=ActionOut, dependencies=[api])
+    def post_action_result(req: ActionResultRequest) -> ActionOut:
+        with state.lock:
+            try:
+                action = state.record_action_result(req.action_id, ActionStatus(req.status), req.detail, now())
+            except KeyError:
+                raise HTTPException(404, "unknown action_id")
+            except ValueError as exc:
+                raise HTTPException(409, str(exc))
+            persist()
+            return action_out(action)
 
     @app.get("/events", response_model=list[GraphEvent], dependencies=[api])
     def get_events(since: int = 0) -> list[GraphEvent]:
@@ -191,6 +255,8 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
     @app.post("/reset", dependencies=[api])
     def reset() -> dict:
         state.reset()
+        persist()
         return {"ok": True, "tasks": len(state.tasks)}
 
+    persist()
     return app

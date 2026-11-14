@@ -4,6 +4,7 @@ State = plan.json + replay(events). Events are only ever appended (reset truncat
 """
 
 import json
+import os
 import re
 import threading
 import unicodedata
@@ -12,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from kraftsync.contracts import (
+    Action,
+    ActionStatus,
     Dependency,
     Discrepancy,
     EventKind,
@@ -39,9 +42,10 @@ def _tokens(text: str) -> set[str]:
 
 
 class ProjectState:
-    def __init__(self, plan_path: Path, events_path: Path):
+    def __init__(self, plan_path: Path, events_path: Path, snapshot_path: Path | None = None):
         self.plan_path = plan_path
         self.events_path = events_path
+        self.snapshot_path = snapshot_path
         self.lock = threading.RLock()
         self._init_from_plan()
         self._replay()
@@ -53,6 +57,8 @@ class ProjectState:
         self.tasks: dict[str, Task] = {t.id: t for t in self.plan.tasks}
         self.events: list[GraphEvent] = []
         self.discrepancies: list[Discrepancy] = []
+        self.actions: dict[str, Action] = {}
+        self.action_detail: dict[str, str | None] = {}
         self._next_id = 1
 
     def _replay(self) -> None:
@@ -69,6 +75,14 @@ class ProjectState:
                 self.tasks[ev.task_id] = Task.model_validate(merged)
             elif ev.kind == EventKind.discrepancy_raised:
                 self.discrepancies.append(Discrepancy.model_validate(ev.payload["discrepancy"]))
+            elif ev.kind == EventKind.action_drafted:
+                action = Action.model_validate(ev.payload["action"])
+                self.actions[action.id] = action
+            elif ev.kind == EventKind.action_sent and ev.payload.get("action_id") in self.actions:
+                action_id = ev.payload["action_id"]
+                self.actions[action_id] = self.actions[action_id].model_copy(
+                    update={"status": ActionStatus(ev.payload["status"])})
+                self.action_detail[action_id] = ev.payload.get("detail")
 
     def reset(self) -> None:
         with self.lock:
@@ -134,6 +148,34 @@ class ProjectState:
         with self.events_path.open("a", encoding="utf-8") as f:
             f.write(ev.model_dump_json() + "\n")
         return ev
+
+    def draft_action(self, action: Action, source_message_id: str, now: datetime) -> GraphEvent:
+        self.actions[action.id] = action
+        return self.log(EventKind.action_drafted, "policy", now, source_message_id=source_message_id,
+                        payload={"action": json.loads(action.model_dump_json())})
+
+    def record_action_result(self, action_id: str, status: ActionStatus, detail: str | None,
+                             now: datetime) -> Action:
+        current = self.actions.get(action_id)
+        if current is None:
+            raise KeyError(action_id)
+        if current.status == status:
+            return current
+        if current.status == ActionStatus.sent:
+            raise ValueError("action is already sent")
+        self.log(EventKind.action_sent, "n8n", now,
+                 payload={"action_id": action_id, "status": status.value, "detail": detail})
+        self.actions[action_id] = current.model_copy(update={"status": status})
+        self.action_detail[action_id] = detail
+        return self.actions[action_id]
+
+    def write_snapshot(self, text: str) -> None:
+        if self.snapshot_path is None:
+            return
+        self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.snapshot_path.with_suffix(".json.tmp")
+        temporary.write_text(text, encoding="utf-8")
+        os.replace(temporary, self.snapshot_path)
 
     def apply(self, u: TaskUpdate, actor: str, now: datetime) -> GraphEvent | None:
         """Apply an interpreted update to a task. Returns the task_changed event, or None if nothing changed."""
