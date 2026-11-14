@@ -49,6 +49,7 @@ Each package folder has its own `CLAUDE.md` with local rules. Stay inside the pa
 ```bash
 uv sync                                         # install
 uv run python scripts/generate_demo_plan.py     # regenerate data/demo/*
+uv run python scripts/generate_demo_sources.py  # regenerate data/demo/sources/ (CSV + PDF) from plan.json
 uv run pytest -q                                # all tests
 uv run python -m kraftsync.engine.replay data/demo/messages.jsonl   # replay demo chat through the whole pipeline
 uv run python -m kraftsync.engine.eval data/demo/messages.jsonl     # interpretation accuracy vs gold labels

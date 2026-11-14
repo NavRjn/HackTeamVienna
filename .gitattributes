@@ -1,0 +1,6 @@
+data/demo/sources/*.pdf binary
+data/demo/sources/*.csv text eol=lf
+data/demo/sources/*.xml text eol=lf
+data/demo/sources/*.xlsx binary
+data/demo/sources/*.xer -text
+tests/fixtures/*.xer -text
