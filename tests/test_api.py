@@ -35,7 +35,7 @@ def settings(tmp_path, **kw):
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(json.dumps(plan), encoding="utf-8")
     return Settings(token=TOKEN, plan_path=plan_path, events_path=tmp_path / "events.jsonl",
-                    snapshot_path=tmp_path / "graph.json", **kw)
+                    snapshot_path=tmp_path / "graph.json", history_path=DEMO / "history.jsonl", **kw)
 
 
 @pytest.fixture
@@ -108,7 +108,7 @@ def test_context_window_is_three_days(client):
     assert "T6-BOARD" in {t["id"] for t in on_9["tasks"]}
     # (DEMO_TODAY pins "today"; check the window rule on the state helper directly)
     from datetime import date as d
-    from kraftsync.app.state import _active_around
+    from kraftsync.graph.project_graph import _active_around
     from kraftsync.contracts import Task
     board = Task.model_validate(next(t for t in PLAN["tasks"] if t["id"] == "T6-BOARD"))
     assert _active_around(board, d(2026, 11, 9)) and not _active_around(board, d(2026, 11, 8))
@@ -270,7 +270,8 @@ def test_state_survives_restart_and_reset(tmp_path, hooks):
     c2.post("/reset", headers=H)
     s3 = c2.get("/state", headers=H).json()
     assert next(t for t in s3["tasks"] if t["id"] == "T6-PLUMB-RI")["forecast_finish"] is None
-    assert c2.get("/events", headers=H).json() == []
+    after_reset = c2.get("/events", headers=H).json()   # only the seeded demo history is left
+    assert {e["kind"] for e in after_reset} <= {"plan_loaded", "update_interpreted", "task_changed"}
 
 
 def test_same_delay_reported_again_does_not_notify_again(client, hooks):
@@ -365,6 +366,7 @@ def test_live_files_are_written_and_the_baseline_is_never_touched(tmp_path, hook
     s = settings(tmp_path, demo_today=date(2026, 11, 9))
     baseline_before = s.plan_path.read_bytes()
     c = TestClient(create_app(s))
+    fresh_kinds = [json.loads(line)["kind"] for line in s.events_path.read_text(encoding="utf-8").splitlines()]
     assert json.loads(s.snapshot_path.read_text(encoding="utf-8"))["project_finish_forecast"] == "2026-12-06"   # exists from start
     ms = {m["id"]: m for m in gold_messages()}
     c.post("/updates", json=body(ms["demo:02"]), headers=H)
@@ -376,7 +378,8 @@ def test_live_files_are_written_and_the_baseline_is_never_touched(tmp_path, hook
     assert s.plan_path.read_bytes() == baseline_before   # static baseline untouched
     c.post("/reset", headers=H)
     assert json.loads(s.snapshot_path.read_text(encoding="utf-8"))["project_finish_forecast"] == "2026-12-06"
-    assert s.events_path.read_text(encoding="utf-8") == ""
+    # reset = the freshly seeded log again (plan_loaded + the demo history), nothing from the session before
+    assert [json.loads(line)["kind"] for line in s.events_path.read_text(encoding="utf-8").splitlines()] == fresh_kinds
 
 
 def test_actions_go_to_an_outbox_and_the_sender_reports_back(client, hooks):

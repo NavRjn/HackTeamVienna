@@ -1,6 +1,6 @@
 # 05 · Interpretation and orchestration
 
-**Status: the interpretation step lives in n8n; the orchestration lives in the local service.** The `kraftsync/engine/` package holds the deterministic checks and routing (`check.py`, `resolve.py`) and calls no LLM; the repo contains no LLM call at all. The LLM node, prompt and schema are specified in [`docs/n8n-workflow.md`](../n8n-workflow.md).
+**Status: the interpretation step lives in n8n; the orchestration lives in the local service.** The deterministic checks live in `kraftsync/graph/` (`ProjectGraph.apply` / `detect`), the routing in `kraftsync/engine/resolve.py`; neither calls an LLM. The only LLM call in the repo is plan-time PDF drafting in `kraftsync/ingestion/pdf.py` (a person reviews its output), never in the message pipeline. The LLM node, prompt and schema are specified in [`docs/n8n-workflow.md`](../n8n-workflow.md).
 
 Goal: turn a free-text site message into a structured, honest claim, then run it through the deterministic pipeline.
 

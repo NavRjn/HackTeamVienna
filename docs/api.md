@@ -20,7 +20,7 @@ means the token can be sniffed there, so use the https tunnel URL whenever possi
 | Written by | the generator script and people | only the service |
 | Contents | the plan as it was before anything happened | `events.jsonl` (append-only truth, incl. the action outbox), `graph.json` (derived snapshot of the current graph, same body as `GET /state`, rewritten after every change), `kraftsync.log` (call log) |
 
-State on start = baseline + replay of `data/live/events.jsonl`. `POST /reset` empties the live events and returns to the baseline;
+State on start = baseline + replay of `data/live/events.jsonl`; on a fresh log the service first feeds `data/demo/history.jsonl` (what happened 2–9 Nov) through the graph. `POST /reset` empties the live events and starts from that seeded state again;
 the baseline is never modified. `graph.json` is only a readable copy for the UI/teammates: delete it and it is rebuilt.
 
 ## Who is the sender

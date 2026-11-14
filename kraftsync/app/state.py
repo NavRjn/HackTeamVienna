@@ -1,76 +1,45 @@
-"""In-memory project state + append-only events.jsonl (placeholder until the graph package lands).
+"""Service-side state: the thin layer between the HTTP API and the graph.
+
+Everything about the project itself (tasks, schedule, applying updates, detecting conflicts, the event log,
+who-may-be-meant shortlists) lives in `kraftsync.graph.ProjectGraph`: that is the single point of control.
+This module only adds what the service needs around it:
+  * the plan with Telegram ids typed into persons.csv,
+  * seeding the demo history once, on a fresh log,
+  * the notification outbox (events in the same log, so it survives restarts),
+  * the derived snapshot file.
 
 Two kinds of files:
-  * baseline (static, committed): data/demo/plan.json (+ persons.csv). Never written by the service.
+  * baseline (static, committed): data/demo/plan.json (+ persons.csv, history.jsonl). Never written by the service.
   * live (dynamic, gitignored, written by the service): <live dir>/events.jsonl (append-only truth),
-    graph.json (derived snapshot of the current graph) and the call log.
-State = baseline + replay(live events). Reset truncates the live events (demo only).
+    graph.json (derived snapshot) and the call log.
+State = baseline + replay(live events). Reset empties the live events and re-seeds the history (demo only).
 """
 
 import csv
-import json
 import logging
 import os
-import re
 import threading
-import unicodedata
-from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
 
-from kraftsync.contracts import (
-    Action,
-    ActionStatus,
-    Dependency,
-    Discrepancy,
-    EventKind,
-    GraphEvent,
-    Person,
-    ProjectPlan,
-    Task,
-    TaskStatus,
-    TaskUpdate,
-    UpdateKind,
-)
+from kraftsync.contracts import Action, ActionStatus, EventKind, GraphEvent, Person, ProjectPlan
+from kraftsync.graph import EventStore, ProjectGraph, feed, read_reports
 
 log = logging.getLogger("kraftsync.state")
 
-DATE_WINDOW_DAYS = 3       # a task is "on this date" if it is active within +-3 days of today
-MAX_TASKS = 15             # cap per list (`tasks`, `related_tasks`)
-
-
-def _fold(text: str) -> str:
-    """Case-, accent- and whitespace-insensitive form, used to match location names in message text."""
-    folded = unicodedata.normalize("NFKD", text).casefold()
-    return " ".join("".join(c for c in folded if not unicodedata.combining(c)).split())
-
-
-def _tokens(text: str) -> set[str]:
-    return set(re.findall(r"\w+", _fold(text)))
-
-
-def _active_around(t: Task, today: date) -> bool:
-    """Is this task relevant on `today`? In progress/blocked, overlapping the +-3 day window, overdue and still
-    open, or finished within the window (people report on what they just finished)."""
-    lo, hi = today - timedelta(days=DATE_WINDOW_DAYS), today + timedelta(days=DATE_WINDOW_DAYS)
-    if t.status == TaskStatus.cancelled:
-        return False
-    if t.status == TaskStatus.done:
-        return t.actual_finish is not None and lo <= t.actual_finish <= hi
-    if t.status in (TaskStatus.in_progress, TaskStatus.blocked):
-        return True
-    last = max(t.planned_finish, t.forecast_finish or t.planned_finish)
-    return last < lo or (t.planned_start <= hi and last >= lo)
-
 
 class ProjectState:
-    def __init__(self, plan_path: Path, events_path: Path, snapshot_path: Path | None = None):
+    def __init__(self, plan_path: Path, events_path: Path, snapshot_path: Path | None = None,
+                 history_path: Path | None = None, confidence_min: float | None = None):
         self.plan_path = plan_path
         self.events_path = events_path
         self.snapshot_path = snapshot_path
+        self.history_path = history_path if history_path is not None else plan_path.with_name("history.jsonl")
+        self.confidence_min = confidence_min
         self.lock = threading.RLock()
-        self._init_from_plan()
-        self._replay()
+        self.store = EventStore(events_path)
+        self._build()
+
+    # -- load ------------------------------------------------------------------------------
 
     def _telegram_ids_from_csv(self) -> dict[str, int]:
         """Telegram ids typed into persons.csv (next to the plan) count too: person id -> id. Blank/invalid rows are skipped."""
@@ -89,54 +58,46 @@ class ProjectState:
                     log.warning("persons.csv: ignoring non-numeric telegram_chat_id for %s", row.get("id"))
         return ids
 
-    def _init_from_plan(self) -> None:
-        self.plan = ProjectPlan.model_validate_json(self.plan_path.read_text(encoding="utf-8"))
+    def _build(self) -> None:
+        plan = ProjectPlan.model_validate_json(self.plan_path.read_text(encoding="utf-8"))
         csv_ids = self._telegram_ids_from_csv()
-        self.plan.persons = [p.model_copy(update={"telegram_chat_id": csv_ids[p.id]}) if p.id in csv_ids else p
-                             for p in self.plan.persons]
-        self.persons: dict[str, Person] = {p.id: p for p in self.plan.persons}
-        self.deps: list[Dependency] = list(self.plan.dependencies)
-        self.tasks: dict[str, Task] = {t.id: t for t in self.plan.tasks}
-        self.events: list[GraphEvent] = []
-        self.discrepancies: list[Discrepancy] = []
+        plan.persons = [p.model_copy(update={"telegram_chat_id": csv_ids[p.id]}) if p.id in csv_ids else p
+                        for p in plan.persons]
+        fresh = not self.store.all()
+        self.graph = ProjectGraph.from_plan(plan, self.store, today=plan.data_date,
+                                            confidence_min=self.confidence_min)
+        if fresh:   # demo story: baseline + what happened until "today", through the same apply() as everything else
+            feed(self.graph, read_reports(self.history_path))
         self.actions: dict[str, Action] = {}        # the outbox: drafted -> sent | failed (rebuilt from events)
         self.action_detail: dict[str, str | None] = {}
-        self._next_id = 1
-        with_id = [p.id for p in self.plan.persons if p.telegram_chat_id is not None]
-        without = [p.id for p in self.plan.persons if p.telegram_chat_id is None]
-        log.info("plan loaded: %s | %d persons, %d with telegram id (%d from persons.csv)%s",
-                 self.plan_path.name, len(self.plan.persons), len(with_id), len(csv_ids),
-                 f" | WITHOUT id (unknown to /context): {', '.join(without)}" if without else "")
-
-    def _replay(self) -> None:
-        if not self.events_path.exists():
-            return
-        for line in self.events_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            ev = GraphEvent.model_validate_json(line)
-            self.events.append(ev)
-            self._next_id = max(self._next_id, (ev.id or 0) + 1)
-            if ev.kind == EventKind.task_changed and ev.task_id in self.tasks:
-                merged = {**self.tasks[ev.task_id].model_dump(mode="json"), **ev.after}
-                self.tasks[ev.task_id] = Task.model_validate(merged)
-            elif ev.kind == EventKind.discrepancy_raised:
-                self.discrepancies.append(Discrepancy.model_validate(ev.payload["discrepancy"]))
-            elif ev.kind == EventKind.action_drafted:
+        for ev in self.store.all():
+            if ev.kind == EventKind.action_drafted:
                 a = Action.model_validate(ev.payload["action"])
                 self.actions[a.id] = a
             elif ev.kind == EventKind.action_sent and ev.payload.get("action_id") in self.actions:
                 aid = ev.payload["action_id"]
                 self.actions[aid] = self.actions[aid].model_copy(update={"status": ActionStatus(ev.payload["status"])})
                 self.action_detail[aid] = ev.payload.get("detail")
+        with_id = [p.id for p in plan.persons if p.telegram_chat_id is not None]
+        without = [p.id for p in plan.persons if p.telegram_chat_id is None]
+        log.info("plan loaded: %s | %d persons, %d with telegram id (%d from persons.csv)%s",
+                 self.plan_path.name, len(plan.persons), len(with_id), len(csv_ids),
+                 f" | WITHOUT id (unknown to /context): {', '.join(without)}" if without else "")
 
     def reset(self) -> None:
         with self.lock:
-            self.events_path.parent.mkdir(parents=True, exist_ok=True)
-            self.events_path.write_text("", encoding="utf-8")
-            self._init_from_plan()
+            self.store.clear()
+            self._build()
 
     # -- lookups ---------------------------------------------------------------------------
+
+    @property
+    def persons(self) -> dict[str, Person]:
+        return self.graph.persons
+
+    @property
+    def events(self) -> list[GraphEvent]:
+        return self.store.all()
 
     def resolve_sender(self, sender_id: int) -> Person | None:
         """Identify a sender by Telegram user id (`Person.telegram_chat_id` in the plan). Unknown id -> None."""
@@ -146,7 +107,7 @@ class ProjectState:
     def has_open_clarification(self, person_id: str) -> bool:
         """Did we ask this person which task they meant and not acknowledged an answer since?"""
         open_ask = False
-        for e in self.events:
+        for e in self.store.all():
             if e.kind != EventKind.action_drafted or e.payload["action"]["to_person_id"] != person_id:
                 continue
             aid = e.payload["action"]["id"]
@@ -156,110 +117,23 @@ class ProjectState:
                 open_ask = False
         return open_ask
 
-    def has_message(self, message_id: str) -> bool:
-        return any(e.kind == EventKind.update_interpreted and e.source_message_id == message_id for e in self.events)
+    # -- outbox (events in the one log) ------------------------------------------------------
 
-    def _locations_mentioned(self, text: str) -> set[str]:
-        """Location ids whose name words all appear in the text (plus all their descendants)."""
-        words = _tokens(text)
-        hit = {loc.id for loc in self.plan.locations if _tokens(loc.name) <= words}
-        grew = True
-        while grew:   # add children of mentioned locations
-            kids = {loc.id for loc in self.plan.locations if loc.parent_id in hit} - hit
-            grew = bool(kids)
-            hit |= kids
-        return hit
-
-    def context_for(self, person_id: str | None, today: date, text: str = "") -> tuple[list[Task], list[Task]]:
-        """Deterministic shortlists for the LLM, kept apart on purpose.
-
-        tasks:         the sender's own tasks (assigned to them or to their trade) that are active around `today`.
-        related_tasks: everyone else's tasks that may be what the message is about: tasks at locations named in
-                       the text, direct predecessors/successors of the sender's tasks, other tasks active around
-                       `today`. Lower authority: the prompt should prefer `tasks`.
-        Unknown sender -> both empty.
-        """
-        person = self.persons.get(person_id) if person_id else None
-        if person is None:
-            return [], []
-
-        def own(t: Task) -> bool:
-            return t.responsible_person_id == person.id or bool(person.trade and t.trade == person.trade)
-
-        def by_date(t: Task) -> tuple:
-            return (t.status == TaskStatus.done, t.planned_start)
-
-        mine = sorted((t for t in self.tasks.values() if own(t) and _active_around(t, today)), key=by_date)
-        mine_ids = {t.id for t in mine}
-        neighbours = {d.successor_id for d in self.deps if d.predecessor_id in mine_ids} | \
-                     {d.predecessor_id for d in self.deps if d.successor_id in mine_ids}
-        mentioned = self._locations_mentioned(text) if text else set()
-
-        # own tasks outside the +-3 day window stay hidden, unless the message names their location
-        related = [t for t in self.tasks.values()
-                   if t.id not in mine_ids and t.status != TaskStatus.cancelled
-                   and (t.location_id in mentioned
-                        or (not own(t) and (t.id in neighbours or _active_around(t, today))))]
-        related.sort(key=lambda t: (t.location_id not in mentioned, t.id not in neighbours, *by_date(t)))
-        return mine[:MAX_TASKS], related[:MAX_TASKS]
-
-    # -- writes (append-only) ---------------------------------------------------------------
-
-    def log(self, kind: EventKind, actor: str, now: datetime, *, task_id: str | None = None,
-            source_message_id: str | None = None, before: dict | None = None,
-            after: dict | None = None, payload: dict | None = None) -> GraphEvent:
-        ev = GraphEvent(
-            id=self._next_id, ts=now, kind=kind, actor=actor, task_id=task_id,
-            source_message_id=source_message_id, before=before or {}, after=after or {}, payload=payload or {},
-        )
-        self._next_id += 1
-        self.events.append(ev)
-        self.events_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.events_path.open("a", encoding="utf-8") as f:
-            f.write(ev.model_dump_json() + "\n")
-        return ev
-
-    def apply(self, u: TaskUpdate, actor: str, now: datetime) -> GraphEvent | None:
-        """Apply an interpreted update to a task. Returns the task_changed event, or None if nothing changed."""
-        t = self.tasks[u.task_id]
-        ch: dict[str, Any] = {}
-        if u.kind == UpdateKind.started:
-            ch.update(status=TaskStatus.in_progress, actual_start=t.actual_start or u.reported_on)
-        elif u.kind == UpdateKind.completed:
-            ch.update(status=TaskStatus.done, actual_start=t.actual_start or u.reported_on,
-                      actual_finish=u.reported_on, percent_complete=100)
-        elif u.kind == UpdateKind.blocked:
-            ch.update(status=TaskStatus.blocked)
-        elif u.kind == UpdateKind.unblocked and t.status == TaskStatus.blocked:
-            ch.update(status=TaskStatus.in_progress if t.actual_start else TaskStatus.not_started)
-        if u.new_forecast_finish and u.kind != UpdateKind.completed:
-            ch["forecast_finish"] = u.new_forecast_finish
-        if u.percent_complete is not None and u.kind != UpdateKind.completed:
-            ch["percent_complete"] = u.percent_complete
-        ch = {k: v for k, v in ch.items() if getattr(t, k) != v}
-        if not ch:
-            return None
-        new = t.model_copy(update=ch)
-        self.tasks[t.id] = new
-        dump_b, dump_a = t.model_dump(mode="json"), new.model_dump(mode="json")
-        keys = [k for k in ch]
-        return self.log(EventKind.task_changed, actor, now, task_id=t.id, source_message_id=u.message_id,
-                        before={k: dump_b[k] for k in keys}, after={k: dump_a[k] for k in keys})
-
-    def record_action(self, a: Action, now: datetime, source_message_id: str | None = None) -> GraphEvent:
+    def record_action(self, a: Action, source_message_id: str | None = None) -> GraphEvent:
         """Put a drafted Action into the outbox (an event, so it survives restarts)."""
         self.actions[a.id] = a
-        return self.log(EventKind.action_drafted, "policy", now, source_message_id=source_message_id,
-                        payload={"action": json.loads(a.model_dump_json())})
+        return self.graph.record(EventKind.action_drafted, "policy", source_message_id=source_message_id,
+                                 payload={"action": a.model_dump(mode="json")})
 
-    def record_action_result(self, action_id: str, status: ActionStatus, detail: str | None, now: datetime) -> Action:
+    def record_action_result(self, action_id: str, status: ActionStatus, detail: str | None) -> Action:
         """The sender (n8n) reports delivery. Idempotent; `sent` is final. KeyError = unknown id, ValueError = conflict."""
         current = self.actions[action_id]
         if current.status == status:
             return current
         if current.status == ActionStatus.sent:
             raise ValueError("action is already sent")
-        self.log(EventKind.action_sent, "n8n", now, payload={"action_id": action_id, "status": status.value, "detail": detail})
+        self.graph.record(EventKind.action_sent, "n8n",
+                          payload={"action_id": action_id, "status": status.value, "detail": detail})
         self.actions[action_id] = current.model_copy(update={"status": status})
         self.action_detail[action_id] = detail
         return self.actions[action_id]
@@ -272,8 +146,3 @@ class ProjectState:
         tmp = self.snapshot_path.with_suffix(".json.tmp")
         tmp.write_text(text, encoding="utf-8")
         os.replace(tmp, self.snapshot_path)
-
-    def record_discrepancy(self, d: Discrepancy, now: datetime) -> GraphEvent:
-        self.discrepancies.append(d)
-        return self.log(EventKind.discrepancy_raised, "engine", now, task_id=d.task_id,
-                        payload={"discrepancy": json.loads(d.model_dump_json())})

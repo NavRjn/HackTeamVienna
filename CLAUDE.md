@@ -31,11 +31,11 @@ Read before doing anything non-trivial:
 kraftsync/
   contracts/      Pydantic domain models shared by everyone (models.py)   ← the contract
   app/            local FastAPI service: api.py (routes), api_models.py (HTTP envelopes), settings.py,
-                  state.py (baseline plan + live events/outbox; placeholder for graph/), serve.py (the only entry point)
-  engine/         check.py (forecast + discrepancy detection), resolve.py (who gets told) — deterministic, no LLM
+                  state.py (service glue around the graph: plan + Telegram ids, history seeding, action outbox), serve.py (the only entry point)
+  engine/         resolve.py (who gets told) — deterministic, no LLM; reads the graph, computes no dates itself
   policy/         policy.yaml (message templates de/en + notify depth; read by engine/resolve.py)
-  graph/          reserved: state/graph logic is to move here from app/state.py
-  ingestion/      reserved: CSV / PDF / MS Project / P6 → ProjectPlan (stretch; not built)
+  graph/          THE single point of control: ProjectGraph (state, CPM schedule, apply, detect, context shortlist), EventStore (events.jsonl), feed
+  ingestion/      CSV / Excel / MS Project XML / P6 XER → ProjectPlan, PDF → reviewed draft (plan time only, see docs/02-ingestion)
   integrations/   reserved: channels are handled by n8n; only a Python WhatsApp-export parser would go here
 n8n/              (to add) exported workflow JSON + prompt
 data/demo/        generated demo project + scripted demo messages (with gold labels)
@@ -62,6 +62,7 @@ uv run python -m kraftsync.app.serve --reload   # same, restarts on code/yaml ch
 uv run python -m kraftsync.app.serve --init     # only create token/port in .env and print them
 cloudflared tunnel --url http://127.0.0.1:<KRAFTSYNC_PORT>   # https URL for n8n Cloud (changes on restart)
 uv run python scripts/generate_demo_plan.py     # regenerate data/demo/* (WIPES the telegram ids typed into persons.csv)
+uv run python scripts/generate_demo_sources.py  # regenerate data/demo/sources/ (CSV + PDF) from plan.json
 ```
 Keep this list true: if a command doesn't exist, it isn't here. (LLM accuracy against gold labels is measured in n8n with a Manual Trigger, see `docs/05-engine`.)
 

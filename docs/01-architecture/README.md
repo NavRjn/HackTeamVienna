@@ -90,23 +90,21 @@ HTTP (the boundary other teammates code against): `GET /health`, `POST /context`
 
 Python (pure functions unless noted):
 ```python
-# kraftsync/engine/check.py
-def forecast(tasks: dict[str, Task], deps: list[Dependency]) -> dict[str, tuple[date, date]]   # forward pass
-def project_finish(fc, tasks, deps) -> date | None
-def unfinished_predecessors(task_id, tasks, deps) -> list[Task]
-def check(before: dict[str, Task], after: dict[str, Task], deps, update: TaskUpdate, now) -> list[Discrepancy]
+# kraftsync/graph   THE single point of control: state, schedule (CPM), apply, detect, event log. See docs/04-graph.
+ProjectGraph.from_plan(plan, store, today, confidence_min)
+  .apply(update, actor) -> [GraphEvent];  .detect(events) -> [Discrepancy];  .schedule() -> {task_id: (start, finish)}
+  .context_for(person_id, today, text) -> (tasks, related_tasks);  .open_predecessors(id);  .has_message(id);  .record(...)
 
-# kraftsync/engine/resolve.py   (rules/texts from kraftsync/policy/policy.yaml)
-def resolve_all(discrepancies, before, after, deps, persons, update, sender, now) -> list[Action]
+# kraftsync/engine/resolve.py   (rules/texts from kraftsync/policy/policy.yaml; reads the graph, computes nothing itself)
+def resolve_all(discrepancies, pg: ProjectGraph, before_schedule, after_schedule, update, sender, now) -> list[Action]
 def ask_clarification(sender: Person, options: list[Task], message_id: str, now) -> Action
+def acknowledge(sender: Person, task_names, informed, message_id, now) -> Action
 
-# kraftsync/app/state.py   (placeholder for the graph package; owns state, live events.jsonl, the action outbox, graph.json)
+# kraftsync/app/state.py   (service glue around the graph: plan + Telegram ids, history seeding, action outbox, graph.json)
 class ProjectState:
+    graph: ProjectGraph;  store: EventStore
     resolve_sender(sender_id: int) -> Person | None     # Telegram user id == Person.telegram_chat_id
-    context_for(person_id, today, text="") -> (tasks, related_tasks)   # each <= 15
-    apply(update, actor, now) -> GraphEvent | None
-    record_discrepancy(d, now) -> GraphEvent
-    log(kind, actor, now, ...) -> GraphEvent;  has_message(message_id);  reset()
+    record_action(a, source_message_id);  record_action_result(action_id, status, detail);  has_open_clarification(person_id);  reset()
 ```
 
 ## Runtime

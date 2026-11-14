@@ -1,6 +1,6 @@
 # 06 · Resolution policy
 
-**Status: v0 built** in `kraftsync/engine/resolve.py` (code) with texts and one setting in `kraftsync/policy/policy.yaml`. Deterministic: discrepancies in, ready-to-send `Action`s out. n8n only delivers them.
+**Status: v0 built** in `kraftsync/engine/resolve.py` (code) with texts and one setting in `kraftsync/policy/policy.yaml`. Deterministic: discrepancies (from the graph) in, ready-to-send `Action`s out. n8n only delivers them.
 
 Goal: decide **who needs to know what** for each discrepancy.
 
@@ -44,7 +44,8 @@ Template keys: `delay_notify`, `delay_escalate`, `hold_point`, `scope_change`, `
 
 ```python
 # kraftsync/engine/resolve.py
-resolve_all(discrepancies, before, after, deps, persons, update, sender, now) -> list[Action]
+resolve_all(discrepancies, pg: ProjectGraph, before_schedule, after_schedule, update, sender, now) -> list[Action]
+acknowledge(sender: Person, task_names, informed, message_id, now) -> Action
 ask_clarification(sender: Person, options: list[Task], message_id: str, now) -> Action
 ```
 `Action.id` is `<discrepancy id>:<person id>` (deterministic). The API attaches `recipients` (name + Telegram chat id) so n8n can send without another lookup.

@@ -327,3 +327,7 @@ data/events.jsonl
 data/kraftsync.log
 data/live/
 data/documents/
+data/kraftsync.db
+data/*.db
+data/my_updates.jsonl
+graph_view.html

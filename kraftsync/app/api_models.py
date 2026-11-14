@@ -64,17 +64,6 @@ class DocumentView(BaseModel):
     task_ref: str | None = None
 
 
-class ActionOut(Action):
-    recipient: Recipient
-    detail: str | None = None
-
-
-class ActionResultRequest(BaseModel):
-    action_id: str = Field(min_length=1, max_length=300)
-    status: Literal["sent", "failed"]
-    detail: str | None = Field(default=None, max_length=300)
-
-
 class ClaimResult(BaseModel):
     message_id: str
     status: Status

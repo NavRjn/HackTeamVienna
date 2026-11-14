@@ -1,0 +1,27 @@
+id,name,kind,trade,location_id,location,responsible_person_id,responsible,company,phone,duration_days,planned_start,planned_finish,predecessors,hold_point,boq_ref
+T5-FRAME,T5 Ständerwerk Trockenbau,work,drywall,T5,Wohnhaus Arsenal > 2. OG > Top 5,P-DRY,Tomasz Nowak,Nowak Trockenbau,+436600000002,3,2026-11-02,2026-11-04,,no,LG39.01
+T5-ELEC-RI,T5 Elektro Rohinstallation,work,electrical,T5,Wohnhaus Arsenal > 2. OG > Top 5,P-ELE,Marko Petrović,Elektro Petrović,+436600000003,3,2026-11-05,2026-11-07,T5-FRAME,no,LG41.02
+T5-PLUMB-RI,T5 Sanitär Rohinstallation + Vorwand,work,plumbing,T5-BATH,Wohnhaus Arsenal > 2. OG > Top 5 > Top 5 Bad,P-SAN,Emre Yılmaz,Yılmaz Haustechnik,+436600000004,3,2026-11-05,2026-11-07,T5-FRAME,no,LG42.01
+T6-FRAME,T6 Ständerwerk Trockenbau,work,drywall,T6,Wohnhaus Arsenal > 2. OG > Top 6,P-DRY,Tomasz Nowak,Nowak Trockenbau,+436600000002,3,2026-11-05,2026-11-07,T5-FRAME,no,LG39.01
+F2-DEL-BOARDS,Lieferung Gipskartonplatten 2. OG,delivery,logistics,F2,Wohnhaus Arsenal > 2. OG,P-SM,Anna Huber,Rhein Bau GmbH,+436600000001,1,2026-11-08,2026-11-08,,no,
+T5-INSP,T5 Abnahme Installationen (vor Beplankung),inspection,inspection,T5,Wohnhaus Arsenal > 2. OG > Top 5,P-INS,Klaus Berger,ÖBA Berger ZT,+436600000005,1,2026-11-08,2026-11-08,T5-ELEC-RI; T5-PLUMB-RI,yes,
+T6-ELEC-RI,T6 Elektro Rohinstallation,work,electrical,T6,Wohnhaus Arsenal > 2. OG > Top 6,P-ELE,Marko Petrović,Elektro Petrović,+436600000003,3,2026-11-08,2026-11-10,T6-FRAME; T5-ELEC-RI,no,LG41.02
+T6-PLUMB-RI,T6 Sanitär Rohinstallation + Vorwand,work,plumbing,T6-BATH,Wohnhaus Arsenal > 2. OG > Top 6 > Top 6 Bad,P-SAN,Emre Yılmaz,Yılmaz Haustechnik,+436600000004,3,2026-11-08,2026-11-10,T6-FRAME; T5-PLUMB-RI,no,LG42.01
+T5-BOARD,T5 Beplankung + Dämmung,work,drywall,T5,Wohnhaus Arsenal > 2. OG > Top 5,P-DRY,Tomasz Nowak,Nowak Trockenbau,+436600000002,3,2026-11-09,2026-11-11,T5-INSP; F2-DEL-BOARDS,no,LG39.02
+T6-INSP,T6 Abnahme Installationen (vor Beplankung),inspection,inspection,T6,Wohnhaus Arsenal > 2. OG > Top 6,P-INS,Klaus Berger,ÖBA Berger ZT,+436600000005,1,2026-11-11,2026-11-11,T6-ELEC-RI; T6-PLUMB-RI,yes,
+T5-SCREED,T5 Estrich,work,screed,T5,Wohnhaus Arsenal > 2. OG > Top 5,P-SCR,Stefan Gruber,Gruber Estrich,+436600000006,1,2026-11-12,2026-11-12,T5-BOARD,no,LG11.01
+T6-BOARD,T6 Beplankung + Dämmung,work,drywall,T6,Wohnhaus Arsenal > 2. OG > Top 6,P-DRY,Tomasz Nowak,Nowak Trockenbau,+436600000002,3,2026-11-12,2026-11-14,T6-INSP; F2-DEL-BOARDS; T5-BOARD,no,LG39.02
+T5-PAINT,T5 Malerarbeiten,work,painting,T5,Wohnhaus Arsenal > 2. OG > Top 5,P-PNT,Jana Novak,Novak Maler,+436600000008,3,2026-11-14,2026-11-16,T5-BOARD FS+2,no,LG45.01
+T6-SCREED,T6 Estrich,work,screed,T6,Wohnhaus Arsenal > 2. OG > Top 6,P-SCR,Stefan Gruber,Gruber Estrich,+436600000006,1,2026-11-15,2026-11-15,T6-BOARD,no,LG11.01
+T5-ELEC-FF,T5 Elektro Fertiginstallation,work,electrical,T5,Wohnhaus Arsenal > 2. OG > Top 5,P-ELE,Marko Petrović,Elektro Petrović,+436600000003,1,2026-11-17,2026-11-17,T5-PAINT,no,LG41.05
+T6-PAINT,T6 Malerarbeiten,work,painting,T6,Wohnhaus Arsenal > 2. OG > Top 6,P-PNT,Jana Novak,Novak Maler,+436600000008,3,2026-11-17,2026-11-19,T6-BOARD FS+2,no,LG45.01
+T6-ELEC-FF,T6 Elektro Fertiginstallation,work,electrical,T6,Wohnhaus Arsenal > 2. OG > Top 6,P-ELE,Marko Petrović,Elektro Petrović,+436600000003,1,2026-11-20,2026-11-20,T6-PAINT,no,LG41.05
+T5-FLOOR,T5 Parkett,work,flooring,T5-LIV,Wohnhaus Arsenal > 2. OG > Top 5 > Top 5 Wohnzimmer,P-FLR,Ivana Kovač,Kovač Böden,+436600000009,2,2026-11-27,2026-11-28,T5-SCREED FS+14; T5-PAINT,no,LG32.01
+T5-WATERPROOF,T5 Abdichtung Bad,work,tiling,T5-BATH,Wohnhaus Arsenal > 2. OG > Top 5 > Top 5 Bad,P-TIL,Luca Bianchi,Bianchi Fliesen,+436600000007,1,2026-11-27,2026-11-27,T5-SCREED FS+14,no,LG24.01
+T5-TILE,T5 Fliesen Bad,work,tiling,T5-BATH,Wohnhaus Arsenal > 2. OG > Top 5 > Top 5 Bad,P-TIL,Luca Bianchi,Bianchi Fliesen,+436600000007,3,2026-11-29,2026-12-01,T5-WATERPROOF FS+1,no,LG24.02
+T6-FLOOR,T6 Parkett,work,flooring,T6-LIV,Wohnhaus Arsenal > 2. OG > Top 6 > Top 6 Wohnzimmer,P-FLR,Ivana Kovač,Kovač Böden,+436600000009,2,2026-11-30,2026-12-01,T6-SCREED FS+14; T6-PAINT,no,LG32.01
+T6-WATERPROOF,T6 Abdichtung Bad,work,tiling,T6-BATH,Wohnhaus Arsenal > 2. OG > Top 6 > Top 6 Bad,P-TIL,Luca Bianchi,Bianchi Fliesen,+436600000007,1,2026-11-30,2026-11-30,T6-SCREED FS+14,no,LG24.01
+T5-SAN-FF,T5 Sanitär Fertigmontage,work,plumbing,T5-BATH,Wohnhaus Arsenal > 2. OG > Top 5 > Top 5 Bad,P-SAN,Emre Yılmaz,Yılmaz Haustechnik,+436600000004,1,2026-12-02,2026-12-02,T5-TILE,no,LG42.05
+T6-TILE,T6 Fliesen Bad,work,tiling,T6-BATH,Wohnhaus Arsenal > 2. OG > Top 6 > Top 6 Bad,P-TIL,Luca Bianchi,Bianchi Fliesen,+436600000007,3,2026-12-02,2026-12-04,T6-WATERPROOF FS+1,no,LG24.02
+T6-SAN-FF,T6 Sanitär Fertigmontage,work,plumbing,T6-BATH,Wohnhaus Arsenal > 2. OG > Top 6 > Top 6 Bad,P-SAN,Emre Yılmaz,Yılmaz Haustechnik,+436600000004,1,2026-12-05,2026-12-05,T6-TILE,no,LG42.05
+F2-HANDOVER,Übergabe 2. OG,milestone,,F2,Wohnhaus Arsenal > 2. OG,P-SM,Anna Huber,Rhein Bau GmbH,+436600000001,0,2026-12-06,2026-12-06,T5-ELEC-FF; T5-SAN-FF; T5-FLOOR; T6-ELEC-FF; T6-SAN-FF; T6-FLOOR,no,

@@ -238,12 +238,12 @@ flowchart LR
         A1["n8n/ (exported workflow, prompt)"]
     end
     subgraph B["B · Detection engine"]
-        B1["kraftsync/engine/<br/>check.py, resolve.py"]
+        B1["kraftsync/engine/<br/>resolve.py"]
         B2["kraftsync/policy/policy.yaml"]
     end
     subgraph C["C · Graph + schema"]
         C1["kraftsync/contracts/models.py"]
-        C2["kraftsync/graph/ (replaces app/state.py)"]
+        C2["kraftsync/graph/ (single point of control)"]
         C3["data/demo/"]
     end
     subgraph D["D · UI, deploy, demo"]
@@ -261,7 +261,7 @@ flowchart LR
 |---|---|---|
 | A · n8n | Telegram trigger → `/context` → LLM node → `/updates` → send actions | The workflow JSON and the prompt |
 | B · Detection | `check()` and `resolve_all()`: more rules (contradictions, silent overdue), better texts | Rules with tests on the gold messages |
-| C · Graph + schema | Contract models, graph state/replay (replaces the placeholder `app/state.py`), demo data | Models stay additive; breaking changes announced, because n8n's schema depends on them |
+| C · Graph + schema | Contract models, graph state/replay (`kraftsync/graph`, the single point of control), demo data | Models stay additive; breaking changes announced, because n8n's schema depends on them |
 | D · UI + deploy | Graph view with the handover date, event feed, tunnel, demo Telegram group, 3-min video | A page that only needs `GET /state` and `GET /events` |
 
 ## Plan to code freeze

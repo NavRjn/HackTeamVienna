@@ -2,13 +2,13 @@
 
 Who hears what: people whose work MOVES get an FYI, the site manager gets decisions,
 the sender is only asked to clarify. One action per person per message (highest priority wins).
+Dates, ripple and predecessor facts are read from the graph (`kraftsync.graph.ProjectGraph`); nothing is recomputed here.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from functools import lru_cache
 from pathlib import Path
 
-import networkx as nx
 import yaml
 
 from kraftsync.contracts import (
@@ -17,13 +17,14 @@ from kraftsync.contracts import (
     Channel,
     Discrepancy,
     DiscrepancyType,
-    Dependency,
     Person,
     Role,
     Task,
     TaskUpdate,
 )
-from kraftsync.engine.check import dependency_graph, forecast, unfinished_predecessors
+from kraftsync.graph import ProjectGraph
+
+Schedule = dict[str, tuple[date, date]]   # task id -> (start, finish), as returned by ProjectGraph.schedule()
 
 POLICY_PATH = Path(__file__).resolve().parents[1] / "policy" / "policy.yaml"
 _PRIORITY = {ActionKind.escalate: 0, ActionKind.ask: 1, ActionKind.notify: 2}
@@ -62,53 +63,51 @@ def acknowledge(sender: Person, task_names: list[str], informed: list[str], mess
 
 def resolve_all(
     discrepancies: list[Discrepancy],
-    before: dict[str, Task],
-    after: dict[str, Task],
-    deps: list[Dependency],
-    persons: dict[str, Person],
+    pg: ProjectGraph,
+    before: Schedule,
+    after: Schedule,
     update: TaskUpdate,
     sender: Person,
     now: datetime,
 ) -> list[Action]:
+    """`before` / `after` = pg.schedule() taken around the applied update."""
+    persons, tasks = pg.persons, pg.tasks
     managers = [p for p in persons.values() if p.role == Role.site_manager]
     inspectors = [p for p in persons.values() if p.role == Role.inspector]
-    fc_b, fc_a = forecast(before, deps), forecast(after, deps)
-    graph = dependency_graph(after, deps)
     levels = _policy().get("downstream_levels_to_notify", 2)
     cause = update.blocker or update.rationale
     actions: list[Action] = []
 
     for d in discrepancies:
-        task = after[d.task_id] if d.task_id else None
+        task = tasks[d.task_id] if d.task_id else None
         if d.type == DiscrepancyType.delay and d.impact:
-            reach = nx.single_source_shortest_path_length(graph, d.task_id, cutoff=levels)
+            reach = pg.reach(d.task_id, levels)
             told: set[str] = set()
             for tid in d.impact.affected_task_ids:
-                person = persons.get(after[tid].responsible_person_id)
+                person = persons.get(tasks[tid].responsible_person_id)
                 if tid not in reach or person is None or person.id in told \
                         or person.id == sender.id or person.role == Role.site_manager:
                     continue
                 told.add(person.id)
                 actions.append(_action(d.id, person, ActionKind.notify, _text(
-                    person, "delay_notify", task_name=after[tid].name,
-                    old_start=fc_b[tid][0], new_start=fc_a[tid][0], cause=cause), now))
-            if d.impact.critical_path_affected:
-                end = max((n for n in graph if graph.out_degree(n) == 0), key=lambda n: fc_a[n][1])
+                    person, "delay_notify", task_name=tasks[tid].name,
+                    old_start=before[tid][0], new_start=after[tid][0], cause=cause), now))
+            pf_b, pf_a = d.impact.project_finish_before, d.impact.project_finish_after
+            if pf_b and pf_a and pf_a > pf_b:   # the handover moved: the site manager decides
+                end = pg.final_task(after)
                 for sm in managers:
                     actions.append(_action(d.id, sm, ActionKind.escalate, _text(
-                        sm, "delay_escalate", milestone=after[end].name,
-                        old=d.impact.project_finish_before, new=d.impact.project_finish_after,
-                        days=(d.impact.project_finish_after - d.impact.project_finish_before).days,
-                        cause=cause), now))
+                        sm, "delay_escalate", milestone=tasks[end].name,
+                        old=pf_b, new=pf_a, days=(pf_a - pf_b).days, cause=cause), now))
         elif d.type == DiscrepancyType.hold_point_violation and task:
-            hold = [p for p in unfinished_predecessors(task.id, after, deps) if p.hold_point]
+            hold = [tasks[p] for p in pg.open_predecessors(task.id) if tasks[p].hold_point]
             for p in managers + inspectors:
                 actions.append(_action(d.id, p, ActionKind.escalate, _text(
                     p, "hold_point", task_name=task.name, inspection_name=hold[0].name), now))
             actions.append(_action(d.id, sender, ActionKind.ask, _text(
                 sender, "hold_point", task_name=task.name, inspection_name=hold[0].name), now))
         elif d.type == DiscrepancyType.out_of_sequence and task:
-            open_preds = unfinished_predecessors(task.id, after, deps)
+            open_preds = [tasks[p] for p in pg.open_predecessors(task.id)]
             names = ", ".join(p.name for p in open_preds)
             owners = {sender.id: sender} | {
                 p.responsible_person_id: persons[p.responsible_person_id]

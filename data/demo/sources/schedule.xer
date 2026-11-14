@@ -1,0 +1,252 @@
+ERMHDR	19.12	2026-01-01	Project	admin	KraftSync	dbxDatabaseNoName	Project Management	EUR
+%T	CALENDAR
+%F	clndr_id	default_flag	clndr_name	clndr_type	day_hr_cnt	week_hr_cnt
+%R	1	Y	7-Tage-Woche	CA_Base	8	56
+%T	PROJECT
+%F	proj_id	proj_short_name	plan_start_date	scd_end_date	clndr_id
+%R	1	arsenal-f2	2026-11-02 08:00	2026-12-06 17:00	1
+%T	PROJWBS
+%F	wbs_id	proj_id	seq_num	proj_node_flag	wbs_short_name	wbs_name	parent_wbs_id
+%R	100	1	1	Y	arsenal-f2	Wohnhaus Arsenal – Ausbau 2. OG	
+%R	101	1	2	N	B1	Wohnhaus Arsenal	100
+%R	102	1	3	N	F2	2. OG	101
+%R	103	1	4	N	T5	Top 5	102
+%R	104	1	5	N	T6	Top 6	102
+%T	RSRC
+%F	rsrc_id	rsrc_name	rsrc_short_name	rsrc_type	email_addr
+%R	1	Anna Huber	P-SM	RT_Labor	
+%R	2	Tomasz Nowak	P-DRY	RT_Labor	
+%R	3	Marko Petrović	P-ELE	RT_Labor	
+%R	4	Emre Yılmaz	P-SAN	RT_Labor	
+%R	5	Klaus Berger	P-INS	RT_Labor	
+%R	6	Stefan Gruber	P-SCR	RT_Labor	
+%R	7	Luca Bianchi	P-TIL	RT_Labor	
+%R	8	Jana Novak	P-PNT	RT_Labor	
+%R	9	Ivana Kovač	P-FLR	RT_Labor	
+%T	ACTVTYPE
+%F	actv_code_type_id	seq_num	actv_code_type	proj_id	actv_code_type_scope
+%R	1	1	Gewerk	1	AS_Project
+%R	2	2	Ort	1	AS_Project
+%T	ACTVCODE
+%F	actv_code_id	actv_code_type_id	short_name	actv_code_name	seq_num
+%R	1	1	drywall	drywall	1
+%R	2	1	electrical	electrical	2
+%R	3	1	flooring	flooring	3
+%R	4	1	inspection	inspection	4
+%R	5	1	logistics	logistics	5
+%R	6	1	painting	painting	6
+%R	7	1	plumbing	plumbing	7
+%R	8	1	screed	screed	8
+%R	9	1	tiling	tiling	9
+%R	100	2	B1	Wohnhaus Arsenal	100
+%R	101	2	F2	2. OG	101
+%R	102	2	T5	Top 5	102
+%R	103	2	T5-BATH	Top 5 Bad	103
+%R	104	2	T5-LIV	Top 5 Wohnzimmer	104
+%R	105	2	T6	Top 6	105
+%R	106	2	T6-BATH	Top 6 Bad	106
+%R	107	2	T6-LIV	Top 6 Wohnzimmer	107
+%T	TASK
+%F	task_id	proj_id	wbs_id	clndr_id	task_code	task_name	task_type	status_code	target_drtn_hr_cnt	remain_drtn_hr_cnt	target_start_date	target_end_date	early_start_date	early_end_date	act_start_date	act_end_date
+%R	1001	1	103	1	T5-FRAME	T5 Ständerwerk Trockenbau	TT_Task	TK_NotStart	24	24	2026-11-02 08:00	2026-11-04 17:00	2026-11-02 08:00	2026-11-04 17:00		
+%R	1002	1	103	1	T5-ELEC-RI	T5 Elektro Rohinstallation	TT_Task	TK_NotStart	24	24	2026-11-05 08:00	2026-11-07 17:00	2026-11-05 08:00	2026-11-07 17:00		
+%R	1003	1	103	1	T5-PLUMB-RI	T5 Sanitär Rohinstallation + Vorwand	TT_Task	TK_NotStart	24	24	2026-11-05 08:00	2026-11-07 17:00	2026-11-05 08:00	2026-11-07 17:00		
+%R	1004	1	104	1	T6-FRAME	T6 Ständerwerk Trockenbau	TT_Task	TK_NotStart	24	24	2026-11-05 08:00	2026-11-07 17:00	2026-11-05 08:00	2026-11-07 17:00		
+%R	1005	1	102	1	F2-DEL-BOARDS	Lieferung Gipskartonplatten 2. OG	TT_Task	TK_NotStart	8	8	2026-11-08 08:00	2026-11-08 17:00	2026-11-08 08:00	2026-11-08 17:00		
+%R	1006	1	103	1	T5-INSP	T5 Abnahme Installationen (vor Beplankung)	TT_Task	TK_NotStart	8	8	2026-11-08 08:00	2026-11-08 17:00	2026-11-08 08:00	2026-11-08 17:00		
+%R	1007	1	104	1	T6-ELEC-RI	T6 Elektro Rohinstallation	TT_Task	TK_NotStart	24	24	2026-11-08 08:00	2026-11-10 17:00	2026-11-08 08:00	2026-11-10 17:00		
+%R	1008	1	104	1	T6-PLUMB-RI	T6 Sanitär Rohinstallation + Vorwand	TT_Task	TK_NotStart	24	24	2026-11-08 08:00	2026-11-10 17:00	2026-11-08 08:00	2026-11-10 17:00		
+%R	1009	1	103	1	T5-BOARD	T5 Beplankung + Dämmung	TT_Task	TK_NotStart	24	24	2026-11-09 08:00	2026-11-11 17:00	2026-11-09 08:00	2026-11-11 17:00		
+%R	1010	1	104	1	T6-INSP	T6 Abnahme Installationen (vor Beplankung)	TT_Task	TK_NotStart	8	8	2026-11-11 08:00	2026-11-11 17:00	2026-11-11 08:00	2026-11-11 17:00		
+%R	1011	1	103	1	T5-SCREED	T5 Estrich	TT_Task	TK_NotStart	8	8	2026-11-12 08:00	2026-11-12 17:00	2026-11-12 08:00	2026-11-12 17:00		
+%R	1012	1	104	1	T6-BOARD	T6 Beplankung + Dämmung	TT_Task	TK_NotStart	24	24	2026-11-12 08:00	2026-11-14 17:00	2026-11-12 08:00	2026-11-14 17:00		
+%R	1013	1	103	1	T5-PAINT	T5 Malerarbeiten	TT_Task	TK_NotStart	24	24	2026-11-14 08:00	2026-11-16 17:00	2026-11-14 08:00	2026-11-16 17:00		
+%R	1014	1	104	1	T6-SCREED	T6 Estrich	TT_Task	TK_NotStart	8	8	2026-11-15 08:00	2026-11-15 17:00	2026-11-15 08:00	2026-11-15 17:00		
+%R	1015	1	103	1	T5-ELEC-FF	T5 Elektro Fertiginstallation	TT_Task	TK_NotStart	8	8	2026-11-17 08:00	2026-11-17 17:00	2026-11-17 08:00	2026-11-17 17:00		
+%R	1016	1	104	1	T6-PAINT	T6 Malerarbeiten	TT_Task	TK_NotStart	24	24	2026-11-17 08:00	2026-11-19 17:00	2026-11-17 08:00	2026-11-19 17:00		
+%R	1017	1	104	1	T6-ELEC-FF	T6 Elektro Fertiginstallation	TT_Task	TK_NotStart	8	8	2026-11-20 08:00	2026-11-20 17:00	2026-11-20 08:00	2026-11-20 17:00		
+%R	1018	1	103	1	T5-FLOOR	T5 Parkett	TT_Task	TK_NotStart	16	16	2026-11-27 08:00	2026-11-28 17:00	2026-11-27 08:00	2026-11-28 17:00		
+%R	1019	1	103	1	T5-WATERPROOF	T5 Abdichtung Bad	TT_Task	TK_NotStart	8	8	2026-11-27 08:00	2026-11-27 17:00	2026-11-27 08:00	2026-11-27 17:00		
+%R	1020	1	103	1	T5-TILE	T5 Fliesen Bad	TT_Task	TK_NotStart	24	24	2026-11-29 08:00	2026-12-01 17:00	2026-11-29 08:00	2026-12-01 17:00		
+%R	1021	1	104	1	T6-FLOOR	T6 Parkett	TT_Task	TK_NotStart	16	16	2026-11-30 08:00	2026-12-01 17:00	2026-11-30 08:00	2026-12-01 17:00		
+%R	1022	1	104	1	T6-WATERPROOF	T6 Abdichtung Bad	TT_Task	TK_NotStart	8	8	2026-11-30 08:00	2026-11-30 17:00	2026-11-30 08:00	2026-11-30 17:00		
+%R	1023	1	103	1	T5-SAN-FF	T5 Sanitär Fertigmontage	TT_Task	TK_NotStart	8	8	2026-12-02 08:00	2026-12-02 17:00	2026-12-02 08:00	2026-12-02 17:00		
+%R	1024	1	104	1	T6-TILE	T6 Fliesen Bad	TT_Task	TK_NotStart	24	24	2026-12-02 08:00	2026-12-04 17:00	2026-12-02 08:00	2026-12-04 17:00		
+%R	1025	1	104	1	T6-SAN-FF	T6 Sanitär Fertigmontage	TT_Task	TK_NotStart	8	8	2026-12-05 08:00	2026-12-05 17:00	2026-12-05 08:00	2026-12-05 17:00		
+%R	1026	1	102	1	F2-HANDOVER	Übergabe 2. OG	TT_FinMile	TK_NotStart	0	0	2026-12-06 08:00	2026-12-06 08:00	2026-12-06 08:00	2026-12-06 08:00		
+%T	TASKACTV
+%F	task_id	actv_code_type_id	actv_code_id	proj_id
+%R	1001	1	1	1
+%R	1001	2	102	1
+%R	1002	1	2	1
+%R	1002	2	102	1
+%R	1003	1	7	1
+%R	1003	2	103	1
+%R	1004	1	1	1
+%R	1004	2	105	1
+%R	1005	1	5	1
+%R	1005	2	101	1
+%R	1006	1	4	1
+%R	1006	2	102	1
+%R	1007	1	2	1
+%R	1007	2	105	1
+%R	1008	1	7	1
+%R	1008	2	106	1
+%R	1009	1	1	1
+%R	1009	2	102	1
+%R	1010	1	4	1
+%R	1010	2	105	1
+%R	1011	1	8	1
+%R	1011	2	102	1
+%R	1012	1	1	1
+%R	1012	2	105	1
+%R	1013	1	6	1
+%R	1013	2	102	1
+%R	1014	1	8	1
+%R	1014	2	105	1
+%R	1015	1	2	1
+%R	1015	2	102	1
+%R	1016	1	6	1
+%R	1016	2	105	1
+%R	1017	1	2	1
+%R	1017	2	105	1
+%R	1018	1	3	1
+%R	1018	2	104	1
+%R	1019	1	9	1
+%R	1019	2	103	1
+%R	1020	1	9	1
+%R	1020	2	103	1
+%R	1021	1	3	1
+%R	1021	2	107	1
+%R	1022	1	9	1
+%R	1022	2	106	1
+%R	1023	1	7	1
+%R	1023	2	103	1
+%R	1024	1	9	1
+%R	1024	2	106	1
+%R	1025	1	7	1
+%R	1025	2	106	1
+%R	1026	2	101	1
+%T	TASKPRED
+%F	task_pred_id	task_id	pred_task_id	proj_id	pred_proj_id	pred_type	lag_hr_cnt
+%R	1	1002	1001	1	1	PR_FS	0
+%R	2	1003	1001	1	1	PR_FS	0
+%R	3	1004	1001	1	1	PR_FS	0
+%R	4	1006	1002	1	1	PR_FS	0
+%R	5	1006	1003	1	1	PR_FS	0
+%R	6	1007	1004	1	1	PR_FS	0
+%R	7	1007	1002	1	1	PR_FS	0
+%R	8	1008	1004	1	1	PR_FS	0
+%R	9	1008	1003	1	1	PR_FS	0
+%R	10	1009	1006	1	1	PR_FS	0
+%R	11	1009	1005	1	1	PR_FS	0
+%R	12	1010	1007	1	1	PR_FS	0
+%R	13	1010	1008	1	1	PR_FS	0
+%R	14	1011	1009	1	1	PR_FS	0
+%R	15	1012	1010	1	1	PR_FS	0
+%R	16	1012	1005	1	1	PR_FS	0
+%R	17	1012	1009	1	1	PR_FS	0
+%R	18	1013	1009	1	1	PR_FS	16
+%R	19	1014	1012	1	1	PR_FS	0
+%R	20	1015	1013	1	1	PR_FS	0
+%R	21	1016	1012	1	1	PR_FS	16
+%R	22	1017	1016	1	1	PR_FS	0
+%R	23	1018	1011	1	1	PR_FS	112
+%R	24	1018	1013	1	1	PR_FS	0
+%R	25	1019	1011	1	1	PR_FS	112
+%R	26	1020	1019	1	1	PR_FS	8
+%R	27	1021	1014	1	1	PR_FS	112
+%R	28	1021	1016	1	1	PR_FS	0
+%R	29	1022	1014	1	1	PR_FS	112
+%R	30	1023	1020	1	1	PR_FS	0
+%R	31	1024	1022	1	1	PR_FS	8
+%R	32	1025	1024	1	1	PR_FS	0
+%R	33	1026	1015	1	1	PR_FS	0
+%R	34	1026	1023	1	1	PR_FS	0
+%R	35	1026	1018	1	1	PR_FS	0
+%R	36	1026	1017	1	1	PR_FS	0
+%R	37	1026	1025	1	1	PR_FS	0
+%R	38	1026	1021	1	1	PR_FS	0
+%T	TASKRSRC
+%F	taskrsrc_id	task_id	proj_id	rsrc_id
+%R	1	1001	1	2
+%R	2	1002	1	3
+%R	3	1003	1	4
+%R	4	1004	1	2
+%R	5	1005	1	1
+%R	6	1006	1	5
+%R	7	1007	1	3
+%R	8	1008	1	4
+%R	9	1009	1	2
+%R	10	1010	1	5
+%R	11	1011	1	6
+%R	12	1012	1	2
+%R	13	1013	1	8
+%R	14	1014	1	6
+%R	15	1015	1	3
+%R	16	1016	1	8
+%R	17	1017	1	3
+%R	18	1018	1	9
+%R	19	1019	1	7
+%R	20	1020	1	7
+%R	21	1021	1	9
+%R	22	1022	1	7
+%R	23	1023	1	4
+%R	24	1024	1	7
+%R	25	1025	1	4
+%R	26	1026	1	1
+%T	UDFTYPE
+%F	udf_type_id	table_name	udf_type_name	udf_type_label	logical_data_type
+%R	1	TASK	user_field_1	LV-Position	FT_TEXT
+%R	2	TASK	user_field_2	Haltepunkt	FT_TEXT
+%T	UDFVALUE
+%F	udf_type_id	fk_id	proj_id	udf_text
+%R	1	1001	1	LG39.01
+%R	1	1002	1	LG41.02
+%R	1	1003	1	LG42.01
+%R	1	1004	1	LG39.01
+%R	1	1007	1	LG41.02
+%R	1	1008	1	LG42.01
+%R	1	1009	1	LG39.02
+%R	1	1011	1	LG11.01
+%R	1	1012	1	LG39.02
+%R	1	1013	1	LG45.01
+%R	1	1014	1	LG11.01
+%R	1	1015	1	LG41.05
+%R	1	1016	1	LG45.01
+%R	1	1017	1	LG41.05
+%R	1	1018	1	LG32.01
+%R	1	1019	1	LG24.01
+%R	1	1020	1	LG24.02
+%R	1	1021	1	LG32.01
+%R	1	1022	1	LG24.01
+%R	1	1023	1	LG42.05
+%R	1	1024	1	LG24.02
+%R	1	1025	1	LG42.05
+%R	2	1001	1	N
+%R	2	1002	1	N
+%R	2	1003	1	N
+%R	2	1004	1	N
+%R	2	1005	1	N
+%R	2	1006	1	Y
+%R	2	1007	1	N
+%R	2	1008	1	N
+%R	2	1009	1	N
+%R	2	1010	1	Y
+%R	2	1011	1	N
+%R	2	1012	1	N
+%R	2	1013	1	N
+%R	2	1014	1	N
+%R	2	1015	1	N
+%R	2	1016	1	N
+%R	2	1017	1	N
+%R	2	1018	1	N
+%R	2	1019	1	N
+%R	2	1020	1	N
+%R	2	1021	1	N
+%R	2	1022	1	N
+%R	2	1023	1	N
+%R	2	1024	1	N
+%R	2	1025	1	N
+%R	2	1026	1	N
+%E

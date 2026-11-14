@@ -16,13 +16,21 @@ from pathlib import Path
 import networkx as nx
 
 from kraftsync.contracts import (
-    Dependency, DependencyType, Location, LocationKind, JobTitle, Person, ProjectPlan,
-    Role, Task, TaskKind, TaskStatus,
+    Dependency,
+    DependencyType,
+    JobTitle,
+    Location,
+    LocationKind,
+    Person,
+    ProjectPlan,
+    Role,
+    Task,
+    TaskKind,
 )
 
 OUT = Path(__file__).resolve().parents[1] / "data" / "demo"
 PROJECT_START = date(2026, 11, 2)   # Monday
-DATA_DATE = date(2026, 11, 9)       # "today" in the demo story (Monday)
+DATA_DATE = PROJECT_START           # baseline: nothing has happened yet; progress comes only from messages
 
 persons = [
     Person(id="P-SM", job_title=JobTitle.SUPERINTENDENT, name="Anna Huber", role=Role.site_manager, company="Rhein Bau GmbH", phone="+436600000001", language="de"),
@@ -143,15 +151,8 @@ def main() -> None:
             planned_start=start, planned_finish=finish, hold_point=hp, boq_ref=boq,
         ))
 
-    # Live state as of DATA_DATE, chosen so the demo story has something to find:
-    # - everything finishing before DATA_DATE is done on time
-    # - tasks spanning DATA_DATE are in progress
-    for t in tasks:
-        if t.planned_finish < DATA_DATE:
-            t.status, t.actual_start, t.actual_finish, t.percent_complete = (
-                TaskStatus.done, t.planned_start, t.planned_finish, 100)
-        elif t.planned_start <= DATA_DATE <= t.planned_finish:
-            t.status, t.actual_start, t.percent_complete = TaskStatus.in_progress, t.planned_start, 50
+    # Baseline: every task keeps the Task defaults (not_started, no actuals).
+    # Live state comes only from site messages / events, never baked into the plan.
 
     deps = [
         Dependency(id=f"D{i:03d}", predecessor_id=p, successor_id=s,
@@ -177,7 +178,7 @@ def main() -> None:
 
     print(f"{len(tasks)} tasks, {len(deps)} dependencies -> {OUT}")
     for t in sorted(tasks, key=lambda t: t.planned_start):
-        print(f"  {t.planned_start} → {t.planned_finish}  {t.status.value:12} {t.id}")
+        print(f"  {t.planned_start} -> {t.planned_finish}  {t.status.value:12} {t.id}")
 
 
 if __name__ == "__main__":

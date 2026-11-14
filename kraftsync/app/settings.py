@@ -29,6 +29,7 @@ class Settings:
     log_path: Path | None = None       # compact call log file (console always)
     snapshot_path: Path | None = None  # derived snapshot of the live graph (same body as GET /state)
     documents_path: Path = REPO_ROOT / "data" / "documents"
+    history_path: Path | None = None   # demo history seeded on a fresh log; None = history.jsonl next to the plan
     webhook_url: str | None = None     # n8n webhook we call when there is a conflict
     webhook_token: str | None = None   # sent to n8n as X-KraftSync-Token (separate secret)
     confidence_min: float = 0.7
