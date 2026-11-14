@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import date
 from pathlib import Path
 
@@ -260,3 +261,68 @@ def test_own_task_outside_the_window_appears_in_related_only_when_its_location_i
     assert "T5-WATERPROOF" not in {t["id"] for t in plain["tasks"] + plain["related_tasks"]}
     assert "T5-WATERPROOF" in {t["id"] for t in named["related_tasks"]}
     assert "T5-WATERPROOF" not in {t["id"] for t in named["tasks"]}
+
+
+# ---- persons.csv telegram ids + call log ---------------------------------------------------------
+
+def _plan_without_ids(tmp_path):
+    (tmp_path / "plan.json").write_text(json.dumps(PLAN), encoding="utf-8")   # all telegram_chat_id are null
+    return Settings(token=TOKEN, plan_path=tmp_path / "plan.json", events_path=tmp_path / "events.jsonl",
+                    demo_today=date(2026, 11, 9))
+
+
+def test_telegram_ids_typed_into_persons_csv_are_used(tmp_path, hooks):
+    (tmp_path / "persons.csv").write_text(
+        "id,name,telegram_chat_id\n"
+        "P-ELE,Marko Petrovic,1125811575\n"      # works
+        'P-INS,Klaus Berger,""\n'                # literal empty quotes: ignored
+        "P-DRY,Tomasz Nowak,\n"                  # blank: ignored
+        "P-SCR,Stefan Gruber,not-a-number\n"     # invalid: ignored, no crash
+        "P-NOBODY,Ghost,42\n",                   # not in the plan: ignored
+        encoding="utf-8")
+    c = TestClient(create_app(_plan_without_ids(tmp_path)))
+    r = c.post("/context", json={"sender_id": 1125811575}, headers=H).json()
+    assert r["person"]["id"] == "P-ELE" and r["person"]["telegram_chat_id"] == 1125811575
+    assert c.post("/context", json={"sender_id": 42}, headers=H).json()["person"] is None
+
+
+def test_without_ids_everyone_is_unknown(tmp_path, hooks):
+    c = TestClient(create_app(_plan_without_ids(tmp_path)))   # no persons.csv, plan.json has no ids
+    assert c.post("/context", json={"sender_id": 1125811575}, headers=H).json()["person"] is None
+
+
+class _Lines(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.lines = []
+
+    def emit(self, record):
+        self.lines.append(record.getMessage())
+
+
+@pytest.fixture
+def log_lines(client):
+    h = _Lines()
+    logging.getLogger("kraftsync").addHandler(h)
+    yield h.lines
+    logging.getLogger("kraftsync").removeHandler(h)
+
+
+def test_every_call_is_logged_compactly_without_secrets_or_text(client, log_lines):
+    ms = {m["id"]: m for m in gold_messages()}
+    client.post("/context", json={"sender_id": TG["P-SAN"], "text": "GEHEIMER-TEXT-1"}, headers=H)
+    client.post("/context", json={"sender_id": UNKNOWN_TG}, headers=H)
+    client.post("/updates", json=body(ms["demo:02"]), headers=H)
+    client.get("/state", headers={"X-KraftSync-Token": "wrong-token-value-wrong-token-value"})
+    client.post("/context", json={"sender_name": "x"}, headers=H)   # invalid body
+    client.get("/health")
+    client.get("/state", headers=H)   # polling: not logged
+    text = "\n".join(log_lines)
+    assert f"sender={TG['P-SAN']} -> P-SAN" in text and "tasks=" in text
+    assert f"sender={UNKNOWN_TG} -> UNKNOWN" in text
+    assert "demo:02 delayed T6-PLUMB-RI" in text and "-> applied [delay]" in text and "actions=3" in text
+    assert "GET /state 401" in text and "invalid or missing token" in text
+    assert "POST /context 422" in text and "invalid request" in text and "sender_id" in text
+    assert "/health" not in text and "GET /state 200" not in text
+    assert TOKEN not in text and "wrong-token-value" not in text
+    assert "GEHEIMER-TEXT-1" not in text and ms["demo:02"]["text"] not in text

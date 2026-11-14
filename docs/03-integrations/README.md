@@ -32,7 +32,7 @@ Every channel joins the same flow: normalise to `sender_id` (Telegram user id), 
 
 ## For the demo phones
 
-Every demo person needs their Telegram **user id** (the number n8n sees as `message.from.id`) as `telegram_chat_id`: it is how the service recognises the sender and where it sends messages back (a person must have started the bot once to receive DMs). Put each person's Telegram user id into `scripts/generate_demo_plan.py` (`Person(..., telegram_chat_id=<id>)`) and run `uv run python scripts/generate_demo_plan.py`: it writes both `persons.csv` and `plan.json`, and the service reads **`plan.json`**, so editing only the CSV changes nothing. Without an id the person is an unknown sender and their messages are ignored.
+Every demo person needs their Telegram **user id** (the number n8n sees as `message.from.id`) as `telegram_chat_id`: it is how the service recognises the sender and where it sends messages back (a person must have started the bot once to receive DMs). Type each person's Telegram user id into the `telegram_chat_id` column of `data/demo/persons.csv`: the service reads it from there (every non-empty numeric value overrides `plan.json`; blank or invalid cells are ignored). Ids are loaded at startup and by `POST /reset`, not on every request, so restart the service or call `/reset` after editing (`/reset` also clears the event log). `scripts/generate_demo_plan.py` rewrites both files without ids: re-running it wipes them. Without an id the person is an unknown sender and their messages are ignored.
 
 ## Stretch (Python side, only if needed)
 

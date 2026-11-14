@@ -16,9 +16,24 @@ means the token can be sniffed there, so use the https tunnel URL whenever possi
 By **Telegram user id** (`message.from.id`, an integer; a numeric string is accepted), sent as `sender_id`. The service matches it to
 `telegram_chat_id` of a person in the plan. An unknown id gives `person: null` with empty task lists (and `ignored: unknown sender`
 on `/updates`), so nothing about the project leaks to strangers. Telegram authenticates the id; display names are not used.
-The ids must be present in `plan.json`: Put each person's Telegram user id into `scripts/generate_demo_plan.py` (`Person(..., telegram_chat_id=<id>)`) and run `uv run python scripts/generate_demo_plan.py`: it writes both `persons.csv` and `plan.json`, and the service reads **`plan.json`**, so editing only the CSV changes nothing.
+Where the ids come from: Type each person's Telegram user id into the `telegram_chat_id` column of `data/demo/persons.csv`: the service reads it from there (every non-empty numeric value overrides `plan.json`; blank or invalid cells are ignored). Ids are loaded at startup and by `POST /reset`, not on every request, so restart the service or call `/reset` after editing (`/reset` also clears the event log). `scripts/generate_demo_plan.py` rewrites both files without ids: re-running it wipes them.
 
 "Today" = `DEMO_TODAY` if set (stage override), else the date of `received_at`, else the server's date.
+
+## Logs
+Every call is logged as one compact line to the console of the process running `serve` and to `data/kraftsync.log`
+(`LOG_PATH`, `off` = console only), e.g.
+```
+00:25:45 POST /context 200 5ms | sender=1125811575 -> P-ELE | today=2026-11-09 tasks=2 related=10
+00:25:45 POST /context 200 2ms | sender=123456789 -> UNKNOWN (no person in the plan has this telegram id) | today=2026-11-09 tasks=0 related=0
+00:26:02 POST /updates 200 31ms | sender=1125811575 -> P-ELE | tg:1:5#1 delayed T6-PLUMB-RI c=0.93 -> applied [delay] actions=3
+00:26:09 GET /state 401 1ms | invalid or missing token
+00:26:15 POST /context 422 1ms | invalid request: body.sender_id: Field required
+```
+On startup it prints which persons have a Telegram id and which do not. Logged: method, path, status, duration, the sender id and
+the person it resolved to, task ids, claim kinds, confidence, resulting status, discrepancy types, number of actions, validation
+errors (field names only), the n8n webhook result. **Never logged:** the token, message text, submitted values.
+Successful `GET /health`, `/state`, `/events` are not logged (UI polling would bury the real calls); errors on them are.
 
 ## Routes
 | Method | Path | Purpose |

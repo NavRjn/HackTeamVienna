@@ -19,10 +19,13 @@ cloudflared tunnel --url http://127.0.0.1:<KRAFTSYNC_PORT>   # prints https://<r
 ```
 First run generates `KRAFTSYNC_TOKEN` and a random `KRAFTSYNC_PORT` into the gitignored `.env`, so the local URL stays stable. The **tunnel URL changes every time the tunnel restarts**; update the n8n variable `KRAFTSYNC_BASE_URL`. The service binds all interfaces by default (teammates on the same Wi-Fi can reach it); set `KRAFTSYNC_HOST=127.0.0.1` to keep it local.
 
+### Logs
+One compact line per call, on the console of the terminal running `serve` and in `data/kraftsync.log` (format in `docs/api.md`). First thing to look at when something does not work: `sender=<id> -> UNKNOWN` means that Telegram id is not in the plan.
+
 ### Security on shared Wi-Fi
 - Every route except `GET /health` needs the header `X-KraftSync-Token`; the service refuses to start without a token of at least 24 characters. The token is the only lock: share it privately, never commit it.
 - Plain HTTP on the LAN can be sniffed; prefer the https tunnel URL, including for teammates.
-- API docs are off (`KRAFTSYNC_DOCS=1` enables them on loopback only), the access log is off, nothing logs tokens or message text, `/context` is a POST so names never land in URLs.
+- API docs are off (`KRAFTSYNC_DOCS=1` enables them on loopback only), the access log is off, the call log never contains tokens or message text, `/context` is a POST so names never land in URLs.
 - The webhook URL to n8n comes only from the environment.
 
 ## Environment (`.env`, see `.env.example`)
@@ -30,7 +33,8 @@ First run generates `KRAFTSYNC_TOKEN` and a random `KRAFTSYNC_PORT` into the git
 | Variable | Meaning |
 |---|---|
 | `KRAFTSYNC_TOKEN`, `KRAFTSYNC_HOST`, `KRAFTSYNC_PORT` | shared secret, bind address, port (all auto-generated/defaulted) |
-| `PLAN_PATH`, `EVENTS_PATH` | plan file (default `data/demo/plan.json`), event log (default `data/events.jsonl`) |
+| `PLAN_PATH`, `EVENTS_PATH` | plan file (default `data/demo/plan.json`; `persons.csv` next to it adds Telegram ids), event log (default `data/events.jsonl`) |
+| `LOG_PATH` | compact one-line-per-call log (default `data/kraftsync.log`; `off` = console only) |
 | `DEMO_TODAY` | freeze "today" (`2026-11-09`): **set it for the scripted demo**, or "Donnerstag" resolves against the real date |
 | `DEMO_REDIRECT_CHAT_ID` | stage mode: all outbound messages to this one chat |
 | `CONFIDENCE_MIN` | below this the sender is asked (default 0.7) |
@@ -64,7 +68,7 @@ The API needs the token on every call: the page asks for it once and keeps it in
 
 - [ ] `.env`: `DEMO_TODAY=2026-11-09`; `DEMO_REDIRECT_CHAT_ID` = the demo group if per-person chat ids are not filled in.
 - [ ] Service running, tunnel up, n8n `KRAFTSYNC_BASE_URL` points at the current tunnel URL; `GET <url>/health` is ok.
-- [ ] Demo Telegram group with the bot (privacy mode off); each demo person's Telegram user id is set as `telegram_chat_id` in the plan (see `docs/03-integrations`: edit `scripts/generate_demo_plan.py` and regenerate; the service reads `plan.json`).
+- [ ] Demo Telegram group with the bot (privacy mode off); each demo person's Telegram user id is in the `telegram_chat_id` column of `data/demo/persons.csv`; restart the service or `POST /reset`; the startup line in the log lists persons still without an id.
 - [ ] `POST /reset` between rehearsals.
 - [ ] Scripted messages printed on a card (from `data/demo/messages.jsonl`), in order.
 - [ ] Fallback if Telegram or Wi-Fi fails: n8n Manual Trigger with the scripted messages, or `curl` to `/updates`.

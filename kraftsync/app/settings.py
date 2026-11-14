@@ -26,6 +26,7 @@ class Settings:
     port: int = 8000
     plan_path: Path = REPO_ROOT / "data" / "demo" / "plan.json"
     events_path: Path = REPO_ROOT / "data" / "events.jsonl"
+    log_path: Path | None = None       # compact call log file (console always); from_env default data/kraftsync.log
     webhook_url: str | None = None     # n8n webhook we call when there is a conflict
     webhook_token: str | None = None   # sent to n8n as X-KraftSync-Token (separate secret)
     confidence_min: float = 0.7
@@ -47,6 +48,7 @@ class Settings:
                 port=int(e("KRAFTSYNC_PORT") or 8000),
                 plan_path=_path(e("PLAN_PATH"), "data/demo/plan.json"),
                 events_path=_path(e("EVENTS_PATH"), "data/events.jsonl"),
+                log_path=_path(e("LOG_PATH"), "data/kraftsync.log") if e("LOG_PATH") != "off" else None,
                 webhook_url=e("N8N_CONFLICT_WEBHOOK_URL") or None,
                 webhook_token=e("N8N_HOOK_TOKEN") or None,
                 confidence_min=float(e("CONFIDENCE_MIN") or 0.7),

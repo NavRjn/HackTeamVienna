@@ -61,7 +61,7 @@ uv run python -m kraftsync.app.serve            # local API for n8n (LAN; token 
 uv run python -m kraftsync.app.serve --reload   # same, restarts on code/yaml changes
 uv run python -m kraftsync.app.serve --init     # only create token/port in .env and print them
 cloudflared tunnel --url http://127.0.0.1:<KRAFTSYNC_PORT>   # https URL for n8n Cloud (changes on restart)
-uv run python scripts/generate_demo_plan.py     # regenerate data/demo/*
+uv run python scripts/generate_demo_plan.py     # regenerate data/demo/* (WIPES the telegram ids typed into persons.csv)
 ```
 Keep this list true: if a command doesn't exist, it isn't here. (LLM accuracy against gold labels is measured in n8n with a Manual Trigger, see `docs/05-engine`.)
 

@@ -11,7 +11,7 @@ First raised on the first repo read (Fri 13 Nov 2026); status updated after the 
 4. ⬜ **LLM for the interpretation step.** It is now an n8n node, not repo code (`ENGINE_MODEL`/`ANTHROPIC_API_KEY` in the repo are unused). Open for the n8n owner: which model in the node (a fast one for latency, a stronger one for low-confidence retries?) and is an API key/credit available in n8n? (owner: A)
 5. ✅/⬜ **`DEMO_TODAY` = 2026-11-09.** Implemented in the service (candidate selection, date sanity check, the `today` returned by `/context` for the prompt; it wins over the message date). Quiet hours are not implemented, so there is no clash on Saturday. ⬜ It still has to be set in `.env` before the scripted demo.
 6. ⬜ **Gold label demo:04** maps the scope change to `T6-ELEC-RI`, which demo:01 already marked done. Current behaviour: a `modified` claim on a done task raises `scope_change` and escalates to the site manager; the task is not reopened. Intended, or should it target another task? (owner: team)
-7. ✅/⬜ **Demo hosting: decided** — laptop + cloudflared tunnel + n8n Cloud (`07-deployment-demo`). ⬜ Is a real Telegram group with 3 phones available, and are the phones' Telegram user ids set as `telegram_chat_id` in the plan (generator script, then regenerate)?
+7. ✅/⬜ **Demo hosting: decided** — laptop + cloudflared tunnel + n8n Cloud (`07-deployment-demo`). ⬜ Is a real Telegram group with 3 phones available, and are the phones' Telegram user ids set as `telegram_chat_id` in the plan (`persons.csv`, then restart or `POST /reset`)?
 8. ⬜ **Repo licence/visibility for submission.** The repo has an MIT `LICENSE`; the Talona slide says Talona work goes to a private repo and is not published under MIT. Ask the organisers. (owner: team)
 
 ## Resolved

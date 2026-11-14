@@ -346,7 +346,7 @@ In n8n, call `<that URL>/context` and `<that URL>/updates` with the header `X-Kr
 
 | Metric | Value |
 |---|---|
-| Unit/API tests | 21 passing (includes a replay of all 10 gold demo messages) |
+| Unit/API tests | 24 passing (includes a replay of all 10 gold demo messages) |
 | Detected discrepancies vs gold labels | 10 / 10 messages match |
 | LLM task mapping accuracy, update-kind accuracy, wrong-and-confident rate | TBD (n8n LLM step not measured yet) |
 | Message → notification latency | TBD |
@@ -355,5 +355,5 @@ In n8n, call `<that URL>/context` and `<that URL>/updates` with the header `X-Kr
 
 - Demo project and chat messages are synthetic (`data/demo/`), generated to be schedule-consistent.
 - Calendar days, no working calendars.
-- Each demo person's Telegram user id must be set as `telegram_chat_id` in the plan (via `scripts/generate_demo_plan.py`, which writes both `persons.csv` and `plan.json`; the service reads `plan.json`). Without it the person is an unknown sender and their messages are ignored.
+- Each demo person's Telegram user id goes into the `telegram_chat_id` column of `data/demo/persons.csv` (restart the service or `POST /reset` afterwards). Without it the person is an unknown sender and their messages are ignored; the startup log lists who is missing.
 - Licence: the repo carries an MIT `LICENSE`, but the Talona slide says Talona work goes to a private repository. Confirm with the organisers before submitting.

@@ -7,10 +7,16 @@ Contract: docs/api.md. No `from __future__ import annotations` on purpose (FastA
 
 import logging
 import secrets
+import sys
+import time
 from datetime import date, datetime
+from pathlib import Path
 
 import httpx
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from kraftsync.app.api_models import (
     ClaimResult,
@@ -31,6 +37,24 @@ from kraftsync.engine.resolve import ask_clarification, resolve_all
 
 log = logging.getLogger("kraftsync.api")
 MAX_FORECAST_DAYS = 60   # sanity bound on dates the LLM reports, relative to today
+QUIET_GETS = {"/health", "/state", "/events"}   # UI polling would bury the real calls; errors on them are still logged
+
+
+def setup_logging(log_path: Path | None) -> None:
+    """One compact line per call to the console and (if set) a file. Never logs tokens or message text."""
+    root = logging.getLogger("kraftsync")
+    root.setLevel(logging.INFO)
+    root.propagate = False
+    for h in list(root.handlers):
+        root.removeHandler(h)
+    console = logging.StreamHandler(sys.stderr)
+    console.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%H:%M:%S"))
+    root.addHandler(console)
+    if log_path:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(log_path, encoding="utf-8")
+        fh.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%Y-%m-%d %H:%M:%S"))
+        root.addHandler(fh)
 
 
 def post_hook(url: str, token: str | None, hook: ConflictHook) -> None:
@@ -39,15 +63,21 @@ def post_hook(url: str, token: str | None, hook: ConflictHook) -> None:
     if token:
         headers["X-KraftSync-Token"] = token
     try:
-        httpx.post(url, content=hook.model_dump_json(), headers=headers, timeout=5.0).raise_for_status()
+        r = httpx.post(url, content=hook.model_dump_json(), headers=headers, timeout=5.0)
+        r.raise_for_status()
+        log.info("hook -> n8n %d (%d actions)", r.status_code, len(hook.actions))
     except httpx.HTTPError as exc:
-        log.warning("conflict hook failed: %s", type(exc).__name__)
+        log.warning("hook -> n8n FAILED: %s", type(exc).__name__)
 
 
 def create_app(settings: Settings | None = None, state: ProjectState | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     settings.validate()
+    setup_logging(settings.log_path)
     state = state or ProjectState(settings.plan_path, settings.events_path)
+    log.info("service up | events=%d | webhook=%s | demo_today=%s | stage_redirect=%s | log=%s", len(state.events),
+             "set" if settings.webhook_url else "off", settings.demo_today or "-",
+             "on" if settings.redirect_chat_id else "off", settings.log_path.name if settings.log_path else "console only")
     token = settings.token.encode()
     docs_on = settings.docs and settings.loopback
 
@@ -60,6 +90,32 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
         docs_url="/docs" if docs_on else None, redoc_url=None,
         openapi_url="/openapi.json" if docs_on else None,
     )
+
+    @app.middleware("http")
+    async def call_log(request: Request, call_next):
+        t0 = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception as exc:   # unhandled -> 500; log the type only, then let it propagate
+            log.error("%s %s 500 | unhandled %s", request.method, request.url.path, type(exc).__name__)
+            raise
+        detail = getattr(request.state, "log", "")
+        if not (request.method == "GET" and request.url.path in QUIET_GETS and response.status_code < 400):
+            log.info("%s %s %d %dms%s", request.method, request.url.path, response.status_code,
+                     (time.perf_counter() - t0) * 1000, f" | {detail}" if detail else "")
+        return response
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(request: Request, exc: StarletteHTTPException):
+        request.state.log = str(exc.detail)
+        return await http_exception_handler(request, exc)
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_body(request: Request, exc: RequestValidationError):
+        # field names and messages only, never the submitted values
+        request.state.log = "invalid request: " + "; ".join(
+            f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}" for e in exc.errors()[:5])
+        return await request_validation_exception_handler(request, exc)
 
     def today(received_at: datetime | None = None) -> date:
         """DEMO_TODAY (stage override) wins; else the message date; else the real date."""
@@ -153,18 +209,27 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
     api = Depends(require_token)
 
     @app.post("/context", response_model=ContextResponse, dependencies=[api])
-    def context(req: ContextRequest) -> ContextResponse:
+    def context(req: ContextRequest, request: Request) -> ContextResponse:
         # POST (not GET) so ids and message text never end up in URLs or access logs
         with state.lock:
             person = state.resolve_sender(req.sender_id)
             day = today(req.received_at)
             mine, related = state.context_for(person.id if person else None, day, req.text)
+            request.state.log = (f"sender={req.sender_id} -> {person.id if person else 'UNKNOWN (no person in the plan has this telegram id)'}"
+                                 f" | today={day} tasks={len(mine)} related={len(related)}")
             return ContextResponse(person=person, today=day, tasks=mine, related_tasks=related)
 
     @app.post("/updates", response_model=UpdateResponse, dependencies=[api])
-    def updates(req: UpdateRequest, background: BackgroundTasks) -> UpdateResponse:
+    def updates(req: UpdateRequest, background: BackgroundTasks, request: Request) -> UpdateResponse:
         with state.lock:
             resp = process(req)
+            who = state.resolve_sender(req.sender_id)
+            claims = " ; ".join(
+                f"{u.message_id} {u.kind.value} {u.task_id} c={u.confidence:.2f} -> {r.status}"
+                + (f" [{','.join(d.type.value for d in r.discrepancies)}]" if r.discrepancies else "")
+                + (f" actions={len(r.actions)}" if r.actions else "")
+                for u, r in zip(req.updates, resp.results))
+            request.state.log = f"sender={req.sender_id} -> {who.id if who else 'UNKNOWN'} | {claims}"
         if settings.webhook_url and (resp.discrepancies or resp.actions):
             background.add_task(post_hook, settings.webhook_url, settings.webhook_token, ConflictHook(
                 message_id=req.updates[0].message_id, discrepancies=resp.discrepancies,
@@ -190,8 +255,9 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
             return [e for e in state.events if (e.id or 0) > since]
 
     @app.post("/reset", dependencies=[api])
-    def reset() -> dict:
+    def reset(request: Request) -> dict:
         state.reset()
+        request.state.log = "plan reloaded, event log cleared"
         return {"ok": True, "tasks": len(state.tasks)}
 
     return app

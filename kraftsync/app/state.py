@@ -3,7 +3,9 @@
 State = plan.json + replay(events). Events are only ever appended (reset truncates the demo file).
 """
 
+import csv
 import json
+import logging
 import re
 import threading
 import unicodedata
@@ -23,6 +25,8 @@ from kraftsync.contracts import (
     TaskUpdate,
     UpdateKind,
 )
+
+log = logging.getLogger("kraftsync.state")
 
 DATE_WINDOW_DAYS = 3       # a task is "on this date" if it is active within +-3 days of today
 MAX_TASKS = 15             # cap per list (`tasks`, `related_tasks`)
@@ -60,14 +64,39 @@ class ProjectState:
         self._init_from_plan()
         self._replay()
 
+    def _telegram_ids_from_csv(self) -> dict[str, int]:
+        """Telegram ids typed into persons.csv (next to the plan) count too: person id -> id. Blank/invalid rows are skipped."""
+        path = self.plan_path.with_name("persons.csv")
+        if not path.exists():
+            return {}
+        ids: dict[str, int] = {}
+        with path.open(encoding="utf-8", newline="") as f:
+            for row in csv.DictReader(f):
+                raw = (row.get("telegram_chat_id") or "").strip().strip('"')
+                if not raw:
+                    continue
+                try:
+                    ids[row["id"]] = int(raw)
+                except ValueError:
+                    log.warning("persons.csv: ignoring non-numeric telegram_chat_id for %s", row.get("id"))
+        return ids
+
     def _init_from_plan(self) -> None:
         self.plan = ProjectPlan.model_validate_json(self.plan_path.read_text(encoding="utf-8"))
+        csv_ids = self._telegram_ids_from_csv()
+        self.plan.persons = [p.model_copy(update={"telegram_chat_id": csv_ids[p.id]}) if p.id in csv_ids else p
+                             for p in self.plan.persons]
         self.persons: dict[str, Person] = {p.id: p for p in self.plan.persons}
         self.deps: list[Dependency] = list(self.plan.dependencies)
         self.tasks: dict[str, Task] = {t.id: t for t in self.plan.tasks}
         self.events: list[GraphEvent] = []
         self.discrepancies: list[Discrepancy] = []
         self._next_id = 1
+        with_id = [p.id for p in self.plan.persons if p.telegram_chat_id is not None]
+        without = [p.id for p in self.plan.persons if p.telegram_chat_id is None]
+        log.info("plan loaded: %s | %d persons, %d with telegram id (%d from persons.csv)%s",
+                 self.plan_path.name, len(self.plan.persons), len(with_id), len(csv_ids),
+                 f" | WITHOUT id (unknown to /context): {', '.join(without)}" if without else "")
 
     def _replay(self) -> None:
         if not self.events_path.exists():
