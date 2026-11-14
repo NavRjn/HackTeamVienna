@@ -58,3 +58,12 @@ def test_check_reports_an_unreachable_tunnel(monkeypatch, tunnel):
         return httpx.Response(502)
     _patch_client(monkeypatch, tunnel, handler)
     assert "does not reach the service" in tunnel.check("https://x.trycloudflare.com", "t" * 30, timeout_s=0.01)[0]
+
+
+def test_build_command_protocol(tunnel):
+    local = "http://127.0.0.1:1"
+    assert tunnel.build_command("cf", local) == ["cf", "tunnel", "--no-autoupdate", "--url", local]
+    assert tunnel.build_command("cf", local, "http2") == [
+        "cf", "tunnel", "--no-autoupdate", "--protocol", "http2", "--url", local]
+    assert tunnel.build_command("cf", local, "http2", "kraftsync") == [
+        "cf", "tunnel", "--no-autoupdate", "--protocol", "http2", "run", "--url", local, "kraftsync"]

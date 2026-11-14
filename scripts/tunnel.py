@@ -2,6 +2,7 @@
 
     uv run python scripts/tunnel.py                 # quick tunnel: random https://<x>.trycloudflare.com
     uv run python scripts/tunnel.py --show-token    # also print the token (not on a projector!)
+    uv run python scripts/tunnel.py --protocol http2   # TCP instead of QUIC/UDP (networks that block UDP)
 
 Start the service first (`uv run python -m kraftsync.app.serve`), then this in a second terminal and
 leave it open. It:
@@ -42,6 +43,7 @@ ENV_FILE = ROOT / ".env"
 QUICK_URL = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 WINDOWS_PATHS = (r"C:\Program Files (x86)\cloudflared\cloudflared.exe", r"C:\Program Files\cloudflared\cloudflared.exe")
 TOKEN_HEADER = "X-KraftSync-Token"
+PROTOCOLS = ("auto", "quic", "http2")
 
 
 def find_cloudflared() -> str | None:
@@ -58,6 +60,14 @@ def mask(token: str) -> str:
 def parse_quick_url(line: str) -> str | None:
     m = QUICK_URL.search(line)
     return m.group(0) if m and "api.trycloudflare.com" not in m.group(0) else None
+
+
+def build_command(exe: str, local: str, protocol: str = "auto", name: str | None = None) -> list[str]:
+    """cloudflared command line. --protocol is a `tunnel` flag, so it goes before `run`."""
+    cmd = [exe, "tunnel", "--no-autoupdate"]
+    if protocol != "auto":
+        cmd += ["--protocol", protocol]
+    return cmd + (["run", "--url", local, name] if name else ["--url", local])
 
 
 def check(base: str, token: str, timeout_s: float = 90) -> list[str]:
@@ -90,6 +100,9 @@ def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)   # visible when piped/logged
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--show-token", action="store_true", help="print the full token (keep it off screen recordings)")
+    ap.add_argument("--protocol", choices=PROTOCOLS, default="auto",
+                    help="cloudflared edge protocol: auto (default, QUIC with fallback), quic, or http2 (TCP only, "
+                         "use it when UDP is blocked)")
     a = ap.parse_args(argv)
 
     load_dotenv(ENV_FILE)
@@ -110,9 +123,8 @@ def main(argv: list[str] | None = None) -> int:
 
     name, fixed_url = os.environ.get("CLOUDFLARED_TUNNEL_NAME"), os.environ.get("KRAFTSYNC_PUBLIC_URL")
     named = bool(name and fixed_url and "trycloudflare.com" not in fixed_url)
-    cmd = ([exe, "tunnel", "--no-autoupdate", "run", "--url", local, name] if named
-           else [exe, "tunnel", "--no-autoupdate", "--url", local])
-    print(f"starting {'named tunnel ' + name if named else 'quick tunnel'} -> {local} …")
+    cmd = build_command(exe, local, a.protocol, name if named else None)
+    print(f"starting {'named tunnel ' + name if named else 'quick tunnel'} -> {local} (protocol {a.protocol}) …")
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                             encoding="utf-8", errors="replace")
     found: dict[str, str] = {}
