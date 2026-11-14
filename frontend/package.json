@@ -1,0 +1,11 @@
+{
+  "name": "kraftsync-frontend",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --check public/dashboard.js && node --check public/graph.js && node --check public/data.js",
+    "test": "node --test"
+  }
+}

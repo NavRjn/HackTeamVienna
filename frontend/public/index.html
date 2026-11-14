@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KraftSync | Site operations</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/dashboard.js"></script>
+</head>
+<body>
+  <header class="topbar"><div class="brand"><span class="mark" aria-hidden="true">K</span>KraftSync</div><span class="connection" id="connection" role="status">Connecting to API</span></header>
+  <main>
+    <section class="mast"><div><p class="eyebrow">SITE OPERATIONS</p><h1 id="project">Project dashboard</h1><p id="data-date" class="muted"></p></div><div id="handover" class="handover"></div></section>
+    <p id="network-error" class="notice" role="status" hidden></p>
+    <div id="workspace" hidden>
+      <section id="metrics" class="metrics" aria-label="Project metrics"></section>
+      <nav id="views" aria-label="Project views">
+        <button type="button" data-view="graph" aria-current="page">Dependency graph</button>
+        <button type="button" data-view="schedule">Schedule</button>
+        <button type="button" data-view="issues">Issues</button>
+        <button type="button" data-view="activity">Activity</button>
+      </nav>
+      <section class="filters" id="filters" aria-label="Filters">
+        <label>Search tasks<input id="search" type="search" placeholder="Name or task ID"></label>
+        <label>Location<select id="location"></select></label>
+        <label>Trade<select id="trade"></select></label>
+        <label>Status<select id="status"></select></label>
+        <label>Assignee<select id="assignee"></select></label>
+        <label id="severity-filter" hidden>Severity<select id="severity"></select></label>
+      </section>
+      <div class="workgrid">
+        <section class="panel" id="view"></section>
+        <aside class="panel detail" id="detail" aria-label="Task details"></aside>
+      </div>
+    </div>
+  </main>
+</body>
+</html>
