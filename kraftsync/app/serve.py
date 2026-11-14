@@ -76,6 +76,7 @@ def main() -> None:
     print("KraftSync local service")
     print(f"  base URL : {url}   (health: {url}/health)")
     print(f"  header   : X-KraftSync-Token: {settings.token}")
+    print(f"  live data: {settings.events_path.parent}  (events.jsonl, graph.json, kraftsync.log)")
     if made:
         print(f"  (generated {' + '.join(made)}, saved to .env)")
     if not settings.loopback:

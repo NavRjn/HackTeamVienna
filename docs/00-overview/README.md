@@ -33,8 +33,8 @@ Architecture in one line: **Telegram → n8n (LLM reads the message) → local s
 2. **Chat → claims.** Telegram message arrives in n8n; the sender is identified by Telegram id; the local service returns the sender's own tasks for that date plus related tasks; n8n's LLM node turns the message into claims (task, kind, new date, confidence). Unsure → the sender is asked instead.
 3. **Detect.** The local service applies each claim, recomputes dates (forward pass) and raises discrepancies: delay with downstream impact, out-of-sequence work, hold-point violation, scope change, blocked. (Contradicting reports and overdue-without-report are planned.)
 4. **Resolve.** The policy decides who needs to know and what to ask; the response lists ready-to-send messages.
-5. **Notify.** n8n sends those messages on Telegram.
-6. **Log & show.** Every change is an event in an append-only log; the UI shows the graph, forecast dates and the discrepancy feed (`GET /state`, `GET /events`).
+5. **Notify.** The messages are stored in an outbox; a notifier workflow in n8n sends them on Telegram (an agent may reword them) and reports back.
+6. **Log & show.** Every change is an event in an append-only live log (`data/live/`, next to the untouched baseline in `data/demo/`); the UI shows the graph, forecast dates and the discrepancy feed (`GET /state`, `GET /events`).
 
 ## Demo story (data in `data/demo/`)
 
@@ -53,7 +53,7 @@ Closing line: *"Nobody changed how they work. The schedule just stopped lying."*
 | Talona "what wins" | KraftSync |
 |---|---|
 | Connect to what the site already uses | Lives in the Telegram group crews already use (n8n in between); plan imports are a stretch |
-| One live record of what changed and who decided | Append-only event log (`events.jsonl`); every change has a source message and actor |
+| One live record of what changed and who decided | Append-only event log (`data/live/events.jsonl`); every change has a source message and actor |
 | Flag issues as they happen | Discrepancies raised on the message that causes them |
 | Decisions go to the superintendent | Policy escalates decisions to the site manager; FYIs go to affected trades |
 

@@ -209,7 +209,8 @@ class EventKind(str, Enum):
     task_changed = "task_changed"
     discrepancy_raised = "discrepancy_raised"
     discrepancy_resolved = "discrepancy_resolved"
-    action_sent = "action_sent"
+    action_drafted = "action_drafted"   # additive: an Action was created (outbox); payload.action
+    action_sent = "action_sent"         # delivery result reported back: payload {action_id, status, detail}
     manual_override = "manual_override"
 
 

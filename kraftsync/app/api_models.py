@@ -72,6 +72,19 @@ class UpdateResponse(BaseModel):
     recipients: dict[str, Recipient] = Field(default_factory=dict)
 
 
+class ActionOut(Action):
+    """An outbox entry: the Action (with its current `status`) plus who/where to send it."""
+    recipient: Recipient
+    detail: str | None = None    # what the sender reported (e.g. an error), if anything
+
+
+class ActionResultRequest(BaseModel):
+    """The notifier reports what happened to one action. Sent twice with the same status is fine."""
+    action_id: str = Field(min_length=1, max_length=300)
+    status: Literal["sent", "failed"]
+    detail: str | None = Field(default=None, max_length=300)
+
+
 class ConflictHook(BaseModel):
     """Body we POST to the n8n webhook when there is something to tell people."""
     message_id: str

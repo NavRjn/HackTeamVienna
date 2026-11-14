@@ -5,7 +5,7 @@ Goal: it runs somewhere reachable, it looks clear on a projector, and the submis
 ## Runtime layout
 
 ```
-Telegram group ⇄ n8n Cloud ⇄ (cloudflared tunnel, https) ⇄ local FastAPI service (our laptop) ⇄ plan.json + events.jsonl
+Telegram group ⇄ n8n Cloud ⇄ (cloudflared tunnel, https) ⇄ local FastAPI service (our laptop) ⇄ data/demo (baseline) + data/live (events, graph.json)
                                                                    ▲
                                                                    └── UI (GET /state, GET /events)
 ```
@@ -20,7 +20,7 @@ cloudflared tunnel --url http://127.0.0.1:<KRAFTSYNC_PORT>   # prints https://<r
 First run generates `KRAFTSYNC_TOKEN` and a random `KRAFTSYNC_PORT` into the gitignored `.env`, so the local URL stays stable. The **tunnel URL changes every time the tunnel restarts**; update the n8n variable `KRAFTSYNC_BASE_URL`. The service binds all interfaces by default (teammates on the same Wi-Fi can reach it); set `KRAFTSYNC_HOST=127.0.0.1` to keep it local.
 
 ### Logs
-One compact line per call, on the console of the terminal running `serve` and in `data/kraftsync.log` (format in `docs/api.md`). First thing to look at when something does not work: `sender=<id> -> UNKNOWN` means that Telegram id is not in the plan.
+One compact line per call, on the console of the terminal running `serve` and in `data/live/kraftsync.log` (format in `docs/api.md`). First thing to look at when something does not work: `sender=<id> -> UNKNOWN` means that Telegram id is not in the plan.
 
 ### Security on shared Wi-Fi
 - Every route except `GET /health` needs the header `X-KraftSync-Token`; the service refuses to start without a token of at least 24 characters. The token is the only lock: share it privately, never commit it.
@@ -33,8 +33,9 @@ One compact line per call, on the console of the terminal running `serve` and in
 | Variable | Meaning |
 |---|---|
 | `KRAFTSYNC_TOKEN`, `KRAFTSYNC_HOST`, `KRAFTSYNC_PORT` | shared secret, bind address, port (all auto-generated/defaulted) |
-| `PLAN_PATH`, `EVENTS_PATH` | plan file (default `data/demo/plan.json`; `persons.csv` next to it adds Telegram ids), event log (default `data/events.jsonl`) |
-| `LOG_PATH` | compact one-line-per-call log (default `data/kraftsync.log`; `off` = console only) |
+| `PLAN_PATH` | static baseline plan (default `data/demo/plan.json`; `persons.csv` next to it adds Telegram ids); never written |
+| `LIVE_DIR` | where the service writes (default `data/live`): `events.jsonl`, `graph.json` snapshot, `kraftsync.log`. Gitignored |
+| `LOG_PATH` | `off` = no log file (console only) |
 | `DEMO_TODAY` | freeze "today" (`2026-11-09`): **set it for the scripted demo**, or "Donnerstag" resolves against the real date |
 | `DEMO_REDIRECT_CHAT_ID` | stage mode: all outbound messages to this one chat |
 | `CONFIDENCE_MIN` | below this the sender is asked (default 0.7) |
@@ -44,14 +45,14 @@ LLM and Telegram credentials live in **n8n**, not in this repo. `ANTHROPIC_API_K
 
 ## API
 
-See [`docs/api.md`](../api.md): `GET /health`, `POST /context`, `POST /updates`, `GET /state`, `GET /events`, `POST /reset`. (There is no `POST /messages`; the manual fallback is `POST /updates` or the n8n Manual Trigger.)
+See [`docs/api.md`](../api.md): `GET /health`, `POST /context`, `POST /updates`, `GET /state`, `GET /events`, `GET /actions`, `POST /actions/result`, `POST /reset`. (There is no `POST /messages`; the manual fallback is `POST /updates` or the n8n Manual Trigger.)
 
 ## UI (minimum)
 
 One page, polling the API (every ~2 s):
 1. **Graph view** — Cytoscape.js with dagre layout from `GET /state` (`tasks`, `dependencies`). Node colour = status, red border = open discrepancy. Group by location (Top 5 / Top 6).
 2. **Dates** — per task planned vs forecast (`cpm_start`/`cpm_finish`); the **project finish planned vs forecast** (`project_finish_planned` / `project_finish_forecast`) always visible: the "handover moved" moment.
-3. **Feed** — `GET /events?since=<id>` plus `open_discrepancies`, newest first.
+3. **Feed** — `GET /events?since=<id>` (includes `action_drafted` / `action_sent`, i.e. who was told and whether it was delivered) plus `open_discrepancies`, newest first. The page can also read `data/live/graph.json` (same body as `GET /state`) if it runs on the same machine.
 
 The API needs the token on every call: the page asks for it once and keeps it in the browser (do not hard-code it in a committed file). Lovable (credits available) can generate this front end against the API if that's faster.
 

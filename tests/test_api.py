@@ -34,7 +34,8 @@ def settings(tmp_path, **kw):
         person["telegram_chat_id"] = TG[person["id"]]
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(json.dumps(plan), encoding="utf-8")
-    return Settings(token=TOKEN, plan_path=plan_path, events_path=tmp_path / "events.jsonl", **kw)
+    return Settings(token=TOKEN, plan_path=plan_path, events_path=tmp_path / "events.jsonl",
+                    snapshot_path=tmp_path / "graph.json", **kw)
 
 
 @pytest.fixture
@@ -219,6 +220,24 @@ def test_low_confidence_asks_instead_of_applying(client, hooks):
     assert len(hooks) == 1
 
 
+def test_answer_to_a_clarification_is_acknowledged_once(client, hooks):
+    m = {m["id"]: m for m in gold_messages()}["demo:01"]
+    ask = client.post("/updates", json=body(m, confidence=0.3), headers=H).json()
+    assert ask["actions"][0]["kind"] == "ask"
+
+    answer = body(m)
+    answer["updates"][0]["message_id"] = "demo:01-answer"
+    r = client.post("/updates", json=answer, headers=H).json()
+    acks = [a for a in r["actions"] if a["id"].endswith(":ack:P-ELE")]
+    assert r["status"] == "applied" and len(acks) == 1 and acks[0]["kind"] == "notify"
+    assert r["recipients"]["P-ELE"]["telegram_chat_id"] == TG["P-ELE"] and "Elektro" in acks[0]["text"]
+
+    again = body(m)
+    again["updates"][0]["message_id"] = "demo:01-later"
+    r = client.post("/updates", json=again, headers=H).json()
+    assert not any(a["id"].endswith(":ack:P-ELE") for a in r["actions"])   # nothing was asked, no second ack
+
+
 def test_duplicate_message_is_not_applied_twice(client, hooks):
     ms = {m["id"]: m for m in gold_messages()}
     client.post("/updates", json=body(ms["demo:02"]), headers=H)
@@ -326,3 +345,74 @@ def test_every_call_is_logged_compactly_without_secrets_or_text(client, log_line
     assert "/health" not in text and "GET /state 200" not in text
     assert TOKEN not in text and "wrong-token-value" not in text
     assert "GEHEIMER-TEXT-1" not in text and ms["demo:02"]["text"] not in text
+
+
+# ---- live files (baseline stays static) and the action outbox ---------------------------------------
+
+def test_live_files_are_written_and_the_baseline_is_never_touched(tmp_path, hooks):
+    s = settings(tmp_path, demo_today=date(2026, 11, 9))
+    baseline_before = s.plan_path.read_bytes()
+    c = TestClient(create_app(s))
+    assert json.loads(s.snapshot_path.read_text(encoding="utf-8"))["project_finish_forecast"] == "2026-12-06"   # exists from start
+    ms = {m["id"]: m for m in gold_messages()}
+    c.post("/updates", json=body(ms["demo:02"]), headers=H)
+    snap = json.loads(s.snapshot_path.read_text(encoding="utf-8"))
+    assert snap["project_finish_forecast"] == "2026-12-09" and len(snap["open_discrepancies"]) == 1
+    assert next(t for t in snap["tasks"] if t["id"] == "T6-PLUMB-RI")["forecast_finish"] == "2026-11-13"
+    kinds = [json.loads(line)["kind"] for line in s.events_path.read_text(encoding="utf-8").splitlines()]
+    assert {"message_received", "update_interpreted", "task_changed", "discrepancy_raised", "action_drafted"} <= set(kinds)
+    assert s.plan_path.read_bytes() == baseline_before   # static baseline untouched
+    c.post("/reset", headers=H)
+    assert json.loads(s.snapshot_path.read_text(encoding="utf-8"))["project_finish_forecast"] == "2026-12-06"
+    assert s.events_path.read_text(encoding="utf-8") == ""
+
+
+def test_actions_go_to_an_outbox_and_the_sender_reports_back(client, hooks):
+    ms = {m["id"]: m for m in gold_messages()}
+    r = client.post("/updates", json=body(ms["demo:02"]), headers=H).json()
+    ids = [a["id"] for a in r["actions"]]
+    assert len(ids) == 3
+    outbox = client.get("/actions", headers=H).json()
+    assert [a["id"] for a in outbox] == ids and all(a["status"] == "drafted" for a in outbox)
+    assert {a["to_person_id"]: a["recipient"]["telegram_chat_id"] for a in outbox} == {
+        "P-INS": TG["P-INS"], "P-DRY": TG["P-DRY"], "P-SM": TG["P-SM"]}
+
+    ok = client.post("/actions/result", json={"action_id": ids[0], "status": "sent"}, headers=H)
+    assert ok.status_code == 200 and ok.json()["status"] == "sent"
+    client.post("/actions/result", json={"action_id": ids[1], "status": "failed", "detail": "bot blocked"}, headers=H)
+    assert [a["id"] for a in client.get("/actions", headers=H).json()] == ids[1:]     # open = drafted + failed
+    assert [a["id"] for a in client.get("/actions?status=sent", headers=H).json()] == [ids[0]]
+    failed = client.get("/actions?status=failed", headers=H).json()
+    assert failed[0]["detail"] == "bot blocked"
+    assert len(client.get("/actions?status=all", headers=H).json()) == 3
+
+    n_events = len(client.get("/events", headers=H).json())
+    client.post("/actions/result", json={"action_id": ids[0], "status": "sent"}, headers=H)   # retry: idempotent
+    assert len(client.get("/events", headers=H).json()) == n_events
+    assert client.post("/actions/result", json={"action_id": ids[0], "status": "failed"}, headers=H).status_code == 409
+    assert client.post("/actions/result", json={"action_id": "nope", "status": "sent"}, headers=H).status_code == 404
+    assert client.post("/actions/result", json={"action_id": ids[1], "status": "sent"}, headers=H).status_code == 200   # retry worked
+    assert client.get("/actions", headers=H).json()[0]["id"] == ids[2]
+    assert client.get("/actions").status_code == 401
+
+
+def test_outbox_survives_restart_and_reset(tmp_path, hooks):
+    s = settings(tmp_path, demo_today=date(2026, 11, 9))
+    c1 = TestClient(create_app(s))
+    ms = {m["id"]: m for m in gold_messages()}
+    ids = [a["id"] for a in c1.post("/updates", json=body(ms["demo:02"]), headers=H).json()["actions"]]
+    c1.post("/actions/result", json={"action_id": ids[0], "status": "sent"}, headers=H)
+    c2 = TestClient(create_app(s))   # replays live/events.jsonl
+    assert [a["id"] for a in c2.get("/actions", headers=H).json()] == ids[1:]
+    assert [a["id"] for a in c2.get("/actions?status=sent", headers=H).json()] == [ids[0]]
+    c2.post("/reset", headers=H)
+    assert c2.get("/actions?status=all", headers=H).json() == []
+
+
+def test_stage_redirect_applies_to_the_outbox(tmp_path, hooks):
+    c = TestClient(create_app(settings(tmp_path, demo_today=date(2026, 11, 9), redirect_chat_id=555)))
+    ms = {m["id"]: m for m in gold_messages()}
+    c.post("/updates", json=body(ms["demo:02"]), headers=H)
+    outbox = c.get("/actions", headers=H).json()
+    assert {a["recipient"]["telegram_chat_id"] for a in outbox} == {555}
+    assert all(a["text"].startswith("[an ") for a in outbox)

@@ -31,7 +31,7 @@ Read before doing anything non-trivial:
 kraftsync/
   contracts/      Pydantic domain models shared by everyone (models.py)   ← the contract
   app/            local FastAPI service: api.py (routes), api_models.py (HTTP envelopes), settings.py,
-                  state.py (plan + events.jsonl; placeholder for graph/), serve.py (the only entry point)
+                  state.py (baseline plan + live events/outbox; placeholder for graph/), serve.py (the only entry point)
   engine/         check.py (forecast + discrepancy detection), resolve.py (who gets told) — deterministic, no LLM
   policy/         policy.yaml (message templates de/en + notify depth; read by engine/resolve.py)
   graph/          reserved: state/graph logic is to move here from app/state.py
@@ -71,7 +71,8 @@ Keep this list true: if a command doesn't exist, it isn't here. (LLM accuracy ag
 - Dates are calendar days (`date`), timestamps are timezone-aware (local time; the machine runs in Vienna).
 - Config only via env vars (`.env`, see `.env.example`). Never commit secrets, tokens, real phone numbers or `.env`. Never log tokens or message text.
 - The local service is started only through `kraftsync.app.serve` (token check, no docs, no access log).
-- The event log (`data/events.jsonl`) is append-only. Never UPDATE or DELETE an event. Current state = plan + replay of events.
+- Static baseline = `data/demo/` (committed, never written by the service). Live data = `data/live/` (gitignored: `events.jsonl`, `graph.json`, `kraftsync.log`).
+- The event log (`data/live/events.jsonl`) is append-only. Never UPDATE or DELETE an event. Current state = baseline + replay of events; `graph.json` is only a derived copy.
 - Use `data/demo/` for everything until the demo works. Real ingestion output is a bonus, not a dependency.
 - Every module must run without network and without an LLM key in tests (the gold labels are used as claims; the n8n webhook is faked).
 - Before finishing a task: run `uv run pytest -q`. Update the module's doc (and `docs/api.md` for any route change) in the same commit.

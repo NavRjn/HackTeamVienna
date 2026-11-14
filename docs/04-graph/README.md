@@ -10,7 +10,7 @@ Goal: the deterministic heart. Holds the plan + live state, recomputes dates, an
 
 - NetworkX: topological order, DAG check, descendants, shortest-path levels (used to limit who is notified). In-memory, zero infra, fast for thousands of tasks.
 - We own the date logic so "actuals override plan" and "out-of-sequence work is not progress" are ours to control.
-- Event store is `data/events.jsonl` (one `GraphEvent` per line), not SQLite: no database, trivially replayable, easy to inspect. SQLite stays an option if the UI needs queries.
+- Event store is `data/live/events.jsonl` (one `GraphEvent` per line; the live, gitignored counterpart of the committed baseline in `data/demo/`), not SQLite: no database, trivially replayable, easy to inspect. SQLite stays an option if the UI needs queries.
 
 Considered and rejected for the MVP:
 - **Graphiti (Zep) / temporal knowledge graphs**: the LLM builds and mutates the graph, which breaks the determinism rule and makes discrepancies unexplainable. Maybe later as a "project memory" layer.
@@ -72,8 +72,8 @@ Check: for the unchanged demo plan, `forecast()` reproduces every open task's pl
 
 ## Events and state
 
-- `GraphEvent` lines in `EVENTS_PATH` (default `data/events.jsonl`), append-only. Emitted today: `message_received`, `update_interpreted` (always, even when ignored or low confidence), `task_changed` (before/after of the changed fields), `discrepancy_raised`.
-- State = `plan.json` + replay of events on startup. `POST /reset` clears the file and reloads the plan (demo only).
+- `GraphEvent` lines in `data/live/events.jsonl`, append-only. Emitted today: `message_received`, `update_interpreted` (always, even when ignored or low confidence), `task_changed` (before/after of the changed fields), `discrepancy_raised`, `action_drafted` (an `Action` entered the outbox), `action_sent` (delivery result reported by n8n: `sent`/`failed`).
+- State = baseline (`data/demo/plan.json`, never written) + replay of the live events on startup. The outbox (`Action` + status) is rebuilt the same way. `data/live/graph.json` is a derived snapshot of the current graph, rewritten after every change. `POST /reset` clears the live events and returns to the baseline (demo only).
 - Idempotency: a claim whose `message_id` already has an `update_interpreted` event is answered `duplicate` and not applied again.
 
 ## Interface

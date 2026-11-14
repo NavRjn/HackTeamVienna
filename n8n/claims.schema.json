@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["claims"],
+  "properties": {
+    "claims": {
+      "type": "array",
+      "maxItems": 5,
+      "description": "One claim per task the message is about. Merge several statements about the same task into one claim. [] if the message is not about work.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["task_id", "kind", "confidence", "finish", "days_left", "detail", "why"],
+        "properties": {
+          "task_id": { "type": ["string", "null"], "description": "Id from tasks/related_tasks, else null." },
+          "kind": { "enum": ["started", "progress", "completed", "delayed", "blocked", "unblocked", "modified", "question", "irrelevant"] },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "finish": { "type": ["string", "null"], "description": "New finish date YYYY-MM-DD, only if the message names a date/weekday (copy it from the calendar). Else null." },
+          "days_left": { "type": ["integer", "null"], "minimum": 0, "maximum": 60, "description": "Days of work still needed from today ('2 more days' = 2). Only if no date is named. Else null." },
+          "detail": { "type": ["string", "null"], "maxLength": 160, "description": "delayed/blocked/unblocked: the cause. modified: the requested change. Else null." },
+          "why": { "type": "string", "maxLength": 120 }
+        }
+      }
+    }
+  }
+}

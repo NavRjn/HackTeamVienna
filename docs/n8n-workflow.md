@@ -6,8 +6,11 @@ n8n does exactly two things: **the one AI step** and **chat I/O**. Everything el
 with the two HTTP calls below.
 
 ```
-Telegram Trigger → Normalize → HTTP /context → IF known person → LLM (claims) → Build request → HTTP /updates → Split actions → Telegram Send
+Workflow 1 (intake):   Telegram Trigger → Normalize → HTTP /context → IF known person → LLM (claims) → Build request → HTTP /updates
+Workflow 2 (notifier): Webhook (or schedule + GET /actions) → Split actions → (optional AI reword) → Telegram Send → HTTP /actions/result
 ```
+
+Two workflows so that sending is a separate step that can be retried, reworded by an agent, and reported back. **Exactly one workflow sends an action.**
 
 ## Setup (once)
 - **Telegram bot** via BotFather. **Privacy mode off** (`/setprivacy` → Disable) so it sees all group messages. Add it to the demo group.
@@ -39,30 +42,34 @@ Telegram Trigger → Normalize → HTTP /context → IF known person → LLM (cl
    - `rationale`: one short sentence;
    - glossary: Beplankung = boarding, Vorwand = pre-wall, Rohinstallation = rough-in, Estrich = screed, Abnahme = inspection/acceptance, Top = apartment, OG = floor, fertig = done.
 
-   Output schema for the parser (if it rejects the `null` unions, make those fields optional instead):
-   ```json
-   { "type": "object", "required": ["claims"], "properties": { "claims": { "type": "array", "maxItems": 10, "items": {
-     "type": "object", "required": ["task_id", "kind", "confidence", "rationale"], "properties": {
-       "task_id": { "type": ["string", "null"] },
-       "kind": { "type": "string", "enum": ["started","progress","completed","delayed","blocked","unblocked","modified","question","irrelevant"] },
-       "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-       "new_forecast_finish": { "type": ["string", "null"], "description": "YYYY-MM-DD" },
-       "percent_complete": { "type": ["integer", "null"] },
-       "blocker": { "type": ["string", "null"] },
-       "change_description": { "type": ["string", "null"] },
-       "rationale": { "type": "string" } } } } } }
-   ```
-6. **Build request** (Code). For each claim `i` (1-based) add what the LLM must not decide:
-   `message_id = base_id + "#" + i` (unique per claim), `reported_on` = the date of `received_at`, `model = "n8n-claude-v1"`.
-   Guard: if a claim's `task_id` is not in `tasks` or `related_tasks`, set `task_id = null` and `confidence = 0`.
-   If the LLM returned no claims, send one `{ task_id: null, kind: "irrelevant", confidence: 1, rationale: "no task content" }`
-   so the message is still logged. Body: `{ sender_id, text, received_at, channel: "telegram", chat_ref, updates: [...] }`.
+   Output schema for the parser: [`n8n/claims.schema.json`](../n8n/claims.schema.json) (compact: `task_id kind confidence finish days_left detail why`).
+   - `finish` = a date the message names (copied from the calendar table); `days_left` = "2 more days" (days of work still needed from today). The model never adds dates itself: **Build request** turns `days_left` into `today + n`.
+   - Put a **Prep prompt** Code node ([`n8n/prep-prompt.js`](../n8n/prep-prompt.js)) before the LLM: it renders a 15-day calendar (weekday + date) and the task lists, so a small model copies dates instead of computing them.
+   - One claim per task, merge repeats; low temperature; no tools (the LLM calls no API).
+6. **Build request** (Code, [`n8n/build-request.js`](../n8n/build-request.js)). Adds what the LLM must not decide:
+   `message_id = base_id#i`, `reported_on`, `model`, `new_forecast_finish = finish ?? today + days_left`, `detail` → `blocker` / `change_description` by kind.
+   Guards: unknown `task_id` → `null` + confidence 0; duplicate claims per task collapsed (most confident wins); a task-less claim is dropped when a real one exists
+   (otherwise the sender gets a needless "which task?"); no claims at all → one `irrelevant` claim so the message is still logged.
 7. **HTTP Request → `POST {{KRAFTSYNC_BASE_URL}}/updates`**. Retries are safe: `message_id` makes it idempotent.
    Response: `{ status, results, discrepancies, actions[], recipients{} }`.
-8. **Split Out `actions`** → one item per message to send. Skip an item if its recipient has no `telegram_chat_id`.
-9. **Telegram Send Message**: `chat_id = recipients[action.to_person_id].telegram_chat_id`, `text = action.text`.
+The intake workflow **ends here**. The service has already written the live files (`data/live/events.jsonl`, `graph.json`) and put the
+messages to send into its outbox; it also pushes them to the notifier's webhook if `N8N_CONFLICT_WEBHOOK_URL` is set.
+(Simplest alternative without a second workflow: loop over `actions` from the response, Telegram Send to
+`recipients[to_person_id].telegram_chat_id`, then call `POST /actions/result` for each. Do not combine it with workflow 2.)
 
-That is the whole walking skeleton. Nothing in n8n decides who is affected or whether something is a conflict.
+## Workflow 2: Notifier (the "send messages to the relevant people" agent)
+1. **Trigger**, one of:
+   - **Webhook** node, Header Auth with the `N8N_HOOK_TOKEN` value; body `{ message_id, discrepancies, actions, recipients }`; or
+   - **Schedule** every ~15 s → **HTTP Request `GET {{KRAFTSYNC_BASE_URL}}/actions`** (default `status=open`, i.e. drafted + failed).
+2. **Split Out `actions`** → one item per message. Only handle items whose `status` is `drafted` or `failed` (a webhook push carries drafts).
+3. *(Optional)* **AI agent**: reword `text` for tone and language (`recipient`/person language, role, urgency). It may only rephrase:
+   every date, task name and number in `text` must appear unchanged in the result; if in doubt send the original `text`.
+4. **Telegram Send Message**: `chat_id = recipient.telegram_chat_id` (from `GET /actions`; from the webhook use
+   `recipients[to_person_id].telegram_chat_id`), `text`. If the chat id is null, skip sending.
+5. **HTTP Request `POST {{KRAFTSYNC_BASE_URL}}/actions/result`** with `{ action_id, status: "sent" }`, or `{ action_id, status: "failed", detail }`
+   when the send errored or there was no chat id (use the node's error output so failures are reported too). Retrying is safe.
+
+What the people receive for the demo messages is listed below. Nothing in n8n decides who is affected or whether something is a conflict.
 
 ## What the service sends back (examples)
 - Plumber: "Parts missing, Thursday + 1 day" → three actions: inspector (FYI new date), drywaller (FYI new date),

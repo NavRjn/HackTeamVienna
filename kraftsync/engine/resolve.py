@@ -52,6 +52,14 @@ def ask_clarification(sender: Person, options: list[Task], message_id: str, now:
     return _action(f"{message_id}:clarify", sender, ActionKind.ask, _text(sender, "clarify", options=names), now)
 
 
+def acknowledge(sender: Person, task_names: list[str], informed: list[str], message_id: str, now: datetime) -> Action:
+    """Confirm to the sender that their answer to a clarification question was applied (and who was told)."""
+    text = _text(sender, "ack", tasks=", ".join(task_names))
+    if informed:
+        text += _text(sender, "ack_informed", names=", ".join(informed))
+    return _action(f"{message_id}:ack", sender, ActionKind.notify, text, now)
+
+
 def resolve_all(
     discrepancies: list[Discrepancy],
     before: dict[str, Task],

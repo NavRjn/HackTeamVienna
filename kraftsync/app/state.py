@@ -1,11 +1,16 @@
 """In-memory project state + append-only events.jsonl (placeholder until the graph package lands).
 
-State = plan.json + replay(events). Events are only ever appended (reset truncates the demo file).
+Two kinds of files:
+  * baseline (static, committed): data/demo/plan.json (+ persons.csv). Never written by the service.
+  * live (dynamic, gitignored, written by the service): <live dir>/events.jsonl (append-only truth),
+    graph.json (derived snapshot of the current graph) and the call log.
+State = baseline + replay(live events). Reset truncates the live events (demo only).
 """
 
 import csv
 import json
 import logging
+import os
 import re
 import threading
 import unicodedata
@@ -14,6 +19,8 @@ from pathlib import Path
 from typing import Any
 
 from kraftsync.contracts import (
+    Action,
+    ActionStatus,
     Dependency,
     Discrepancy,
     EventKind,
@@ -57,9 +64,10 @@ def _active_around(t: Task, today: date) -> bool:
 
 
 class ProjectState:
-    def __init__(self, plan_path: Path, events_path: Path):
+    def __init__(self, plan_path: Path, events_path: Path, snapshot_path: Path | None = None):
         self.plan_path = plan_path
         self.events_path = events_path
+        self.snapshot_path = snapshot_path
         self.lock = threading.RLock()
         self._init_from_plan()
         self._replay()
@@ -91,6 +99,8 @@ class ProjectState:
         self.tasks: dict[str, Task] = {t.id: t for t in self.plan.tasks}
         self.events: list[GraphEvent] = []
         self.discrepancies: list[Discrepancy] = []
+        self.actions: dict[str, Action] = {}        # the outbox: drafted -> sent | failed (rebuilt from events)
+        self.action_detail: dict[str, str | None] = {}
         self._next_id = 1
         with_id = [p.id for p in self.plan.persons if p.telegram_chat_id is not None]
         without = [p.id for p in self.plan.persons if p.telegram_chat_id is None]
@@ -112,6 +122,13 @@ class ProjectState:
                 self.tasks[ev.task_id] = Task.model_validate(merged)
             elif ev.kind == EventKind.discrepancy_raised:
                 self.discrepancies.append(Discrepancy.model_validate(ev.payload["discrepancy"]))
+            elif ev.kind == EventKind.action_drafted:
+                a = Action.model_validate(ev.payload["action"])
+                self.actions[a.id] = a
+            elif ev.kind == EventKind.action_sent and ev.payload.get("action_id") in self.actions:
+                aid = ev.payload["action_id"]
+                self.actions[aid] = self.actions[aid].model_copy(update={"status": ActionStatus(ev.payload["status"])})
+                self.action_detail[aid] = ev.payload.get("detail")
 
     def reset(self) -> None:
         with self.lock:
@@ -125,6 +142,19 @@ class ProjectState:
         """Identify a sender by Telegram user id (`Person.telegram_chat_id` in the plan). Unknown id -> None."""
         return next((p for p in self.persons.values()
                      if p.telegram_chat_id is not None and p.telegram_chat_id == sender_id), None)
+
+    def has_open_clarification(self, person_id: str) -> bool:
+        """Did we ask this person which task they meant and not acknowledged an answer since?"""
+        open_ask = False
+        for e in self.events:
+            if e.kind != EventKind.action_drafted or e.payload["action"]["to_person_id"] != person_id:
+                continue
+            aid = e.payload["action"]["id"]
+            if f":clarify:{person_id}" in aid:
+                open_ask = True
+            elif f":ack:{person_id}" in aid:
+                open_ask = False
+        return open_ask
 
     def has_message(self, message_id: str) -> bool:
         return any(e.kind == EventKind.update_interpreted and e.source_message_id == message_id for e in self.events)
@@ -215,6 +245,33 @@ class ProjectState:
         keys = [k for k in ch]
         return self.log(EventKind.task_changed, actor, now, task_id=t.id, source_message_id=u.message_id,
                         before={k: dump_b[k] for k in keys}, after={k: dump_a[k] for k in keys})
+
+    def record_action(self, a: Action, now: datetime, source_message_id: str | None = None) -> GraphEvent:
+        """Put a drafted Action into the outbox (an event, so it survives restarts)."""
+        self.actions[a.id] = a
+        return self.log(EventKind.action_drafted, "policy", now, source_message_id=source_message_id,
+                        payload={"action": json.loads(a.model_dump_json())})
+
+    def record_action_result(self, action_id: str, status: ActionStatus, detail: str | None, now: datetime) -> Action:
+        """The sender (n8n) reports delivery. Idempotent; `sent` is final. KeyError = unknown id, ValueError = conflict."""
+        current = self.actions[action_id]
+        if current.status == status:
+            return current
+        if current.status == ActionStatus.sent:
+            raise ValueError("action is already sent")
+        self.log(EventKind.action_sent, "n8n", now, payload={"action_id": action_id, "status": status.value, "detail": detail})
+        self.actions[action_id] = current.model_copy(update={"status": status})
+        self.action_detail[action_id] = detail
+        return self.actions[action_id]
+
+    def write_snapshot(self, text: str) -> None:
+        """Atomically rewrite the derived live graph file (the UI or a teammate can read it)."""
+        if self.snapshot_path is None:
+            return
+        self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.snapshot_path.with_suffix(".json.tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, self.snapshot_path)
 
     def record_discrepancy(self, d: Discrepancy, now: datetime) -> GraphEvent:
         self.discrepancies.append(d)

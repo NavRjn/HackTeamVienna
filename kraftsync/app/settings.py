@@ -25,8 +25,9 @@ class Settings:
     host: str = "0.0.0.0"              # LAN-reachable on purpose (team on the same Wi-Fi); token required
     port: int = 8000
     plan_path: Path = REPO_ROOT / "data" / "demo" / "plan.json"
-    events_path: Path = REPO_ROOT / "data" / "events.jsonl"
-    log_path: Path | None = None       # compact call log file (console always); from_env default data/kraftsync.log
+    events_path: Path = REPO_ROOT / "data" / "live" / "events.jsonl"
+    log_path: Path | None = None       # compact call log file (console always)
+    snapshot_path: Path | None = None  # derived snapshot of the live graph (same body as GET /state)
     webhook_url: str | None = None     # n8n webhook we call when there is a conflict
     webhook_token: str | None = None   # sent to n8n as X-KraftSync-Token (separate secret)
     confidence_min: float = 0.7
@@ -41,14 +42,16 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         e = os.environ.get
+        live = _path(e("LIVE_DIR"), "data/live")   # everything the service writes goes here
         try:
             return cls(
                 token=e("KRAFTSYNC_TOKEN", ""),
                 host=e("KRAFTSYNC_HOST") or "0.0.0.0",
                 port=int(e("KRAFTSYNC_PORT") or 8000),
                 plan_path=_path(e("PLAN_PATH"), "data/demo/plan.json"),
-                events_path=_path(e("EVENTS_PATH"), "data/events.jsonl"),
-                log_path=_path(e("LOG_PATH"), "data/kraftsync.log") if e("LOG_PATH") != "off" else None,
+                events_path=live / "events.jsonl",
+                snapshot_path=live / "graph.json",
+                log_path=None if e("LOG_PATH") == "off" else live / "kraftsync.log",
                 webhook_url=e("N8N_CONFLICT_WEBHOOK_URL") or None,
                 webhook_token=e("N8N_HOOK_TOKEN") or None,
                 confidence_min=float(e("CONFIDENCE_MIN") or 0.7),

@@ -10,7 +10,7 @@ flowchart LR
     N8N -- "HTTPS tunnel + token<br/>POST /context, /updates" --> API["Local service<br/>FastAPI on our machine"]
     API -- "actions + recipients" --> N8N
     N8N --> TG
-    API --- ST[("plan.json + events.jsonl")]
+    API --- ST[("baseline data/demo<br/>live data/live")]
     UI["UI"] -- "GET /state, /events" --> API
 ```
 
@@ -37,7 +37,9 @@ Telegram message
           task_id null or confidence < CONFIDENCE_MIN → ask the sender (nothing applied)
           else apply to state → check(before, after) → resolve(who is told) → actions
   ← response: discrepancies, actions[], recipients{}
-  → n8n: for each action, Telegram Send to recipients[to_person_id].telegram_chat_id
+  ← the service also stored every action in its outbox and wrote data/live/events.jsonl + graph.json
+  → notifier (a second n8n workflow; webhook push or polling GET /actions): Telegram Send each action to
+    recipients[to_person_id].telegram_chat_id, then POST /actions/result {action_id, sent|failed}
 ```
 Optional: the service also POSTs the conflict to `N8N_CONFLICT_WEBHOOK_URL` when there is something to tell. n8n can just use the `/updates` response; the webhook is for events the server starts itself (later: overdue timer).
 
@@ -74,17 +76,17 @@ Consequence: discrepancies are explainable ("T6-BOARD started while predecessor 
 |---|---|---|
 | plan file → local state | `ProjectPlan` | in use (`PLAN_PATH`) |
 | n8n → local service | `TaskUpdate` (one per claim, inside `UpdateRequest.updates`) | in use |
-| local state → log, UI | `GraphEvent` | in use: `message_received`, `update_interpreted`, `task_changed`, `discrepancy_raised` |
+| local state → log, UI | `GraphEvent` | in use: `message_received`, `update_interpreted`, `task_changed`, `discrepancy_raised`, `action_drafted`, `action_sent` (delivery result reported by n8n) |
 | check → resolve | `Discrepancy` (+ `Impact`) | in use |
 | resolve → n8n | `Action` | in use |
 | channel → engine | `InboundMessage` | defined, **not used**: n8n normalises the message itself. Kept for a possible Python integration |
-| unused event kinds | `plan_loaded`, `discrepancy_resolved`, `action_sent`, `manual_override` | not emitted yet (the service does not know if n8n delivered an action) |
+| unused event kinds | `plan_loaded`, `discrepancy_resolved`, `manual_override` | not emitted yet |
 
 Rules: additive changes (new optional field) are fine; renames, removals and type changes need the whole team. The n8n structured-output schema is derived from `TaskUpdate`, so changing it also changes the n8n prompt/schema.
 
 ## Public interfaces (as built)
 
-HTTP (the boundary other teammates code against): `GET /health`, `POST /context`, `POST /updates`, `GET /state`, `GET /events`, `POST /reset` — see `docs/api.md`.
+HTTP (the boundary other teammates code against): `GET /health`, `POST /context`, `POST /updates`, `GET /state`, `GET /events`, `GET /actions`, `POST /actions/result`, `POST /reset` — see `docs/api.md`.
 
 Python (pure functions unless noted):
 ```python
@@ -98,7 +100,7 @@ def check(before: dict[str, Task], after: dict[str, Task], deps, update: TaskUpd
 def resolve_all(discrepancies, before, after, deps, persons, update, sender, now) -> list[Action]
 def ask_clarification(sender: Person, options: list[Task], message_id: str, now) -> Action
 
-# kraftsync/app/state.py   (placeholder for the graph package; owns state + events.jsonl)
+# kraftsync/app/state.py   (placeholder for the graph package; owns state, live events.jsonl, the action outbox, graph.json)
 class ProjectState:
     resolve_sender(sender_id: int) -> Person | None     # Telegram user id == Person.telegram_chat_id
     context_for(person_id, today, text="") -> (tasks, related_tasks)   # each <= 15
@@ -110,7 +112,7 @@ class ProjectState:
 ## Runtime
 
 - **Two processes plus a tunnel.** n8n Cloud; the local FastAPI service (`uv run python -m kraftsync.app.serve`); `cloudflared` quick tunnel from n8n Cloud to the service's port. Details: `07-deployment-demo`.
-- **State:** `plan.json` + append-only `data/events.jsonl` (`EVENTS_PATH`); current state = plan + replay of events. In-memory while running. No database; SQLite is a later option, not a dependency.
+- **State:** static baseline `data/demo/plan.json` (+ `persons.csv` ids) plus the append-only live log `data/live/events.jsonl` (`LIVE_DIR`); current state = baseline + replay of events, in memory while running; `data/live/graph.json` is a derived snapshot rewritten after every change. The baseline is never written. No database; SQLite is a later option, not a dependency.
 - **Config** only via env vars (`.env`, see `.env.example`).
 - **Security:** every route except `/health` needs `X-KraftSync-Token`; the service refuses to start without a strong token; docs and access log are off.
 

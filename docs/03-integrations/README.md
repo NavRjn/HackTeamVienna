@@ -6,7 +6,7 @@
 
 | Channel | Inbound | Outbound | Status |
 |---|---|---|---|
-| **Telegram** | n8n *Telegram Trigger* on the site group (bot privacy mode **off** so it sees all messages) | n8n *Telegram Send Message* to `recipients[person].telegram_chat_id` | Primary demo channel |
+| **Telegram** | n8n *Telegram Trigger* on the site group (bot privacy mode **off** so it sees all messages) | the **notifier** n8n workflow: *Telegram Send Message* to `recipients[person].telegram_chat_id`, then reports `POST /actions/result` | Primary demo channel |
 | **WhatsApp** | n8n WhatsApp Business Cloud trigger, or a chat export replayed into the same flow | n8n send node (template rules apply outside the 24 h window) | Later |
 | **Email** | n8n Gmail/IMAP trigger | n8n Gmail/SMTP send | Later; good for inspector/ÖBA formal messages |
 | **Manual** | n8n Manual Trigger feeding `data/demo/messages.jsonl`; or a direct `POST /updates` | — | Test path and stage fallback |

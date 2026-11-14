@@ -4,6 +4,6 @@ Read `docs/04-graph/README.md` first.
 - 100% deterministic. No LLM calls, no network in this package.
 - NetworkX DiGraph: nodes = Task ids, edges = Dependency (type, lag). Persons/locations are referenced by id.
 - Baseline (`planned_*`) never changes after load. Actuals and forecasts change only via `apply()` which emits GraphEvents.
-- Event store is append-only `data/events.jsonl`. State must be reproducible by replaying events — test this.
+- Event store is append-only `data/live/events.jsonl` (live, gitignored); the baseline in `data/demo/` is never written. State must be reproducible by replaying events — test this.
 - Every Discrepancy must have a human-readable `description` naming the task(s) and the rule that fired, plus an `Impact`.
 - Tests are the spec: the "Done when" list in the doc must exist as pytest cases using data/demo.

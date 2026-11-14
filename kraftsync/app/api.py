@@ -11,6 +11,7 @@ import sys
 import time
 from datetime import date, datetime
 from pathlib import Path
+from typing import Literal
 
 import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
@@ -19,6 +20,8 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from kraftsync.app.api_models import (
+    ActionOut,
+    ActionResultRequest,
     ClaimResult,
     ConflictHook,
     ContextRequest,
@@ -31,9 +34,9 @@ from kraftsync.app.api_models import (
 )
 from kraftsync.app.settings import Settings
 from kraftsync.app.state import ProjectState
-from kraftsync.contracts import Action, EventKind, GraphEvent, TaskUpdate, UpdateKind
+from kraftsync.contracts import Action, ActionStatus, EventKind, GraphEvent, TaskUpdate, UpdateKind
 from kraftsync.engine.check import check, forecast, project_finish
-from kraftsync.engine.resolve import ask_clarification, resolve_all
+from kraftsync.engine.resolve import acknowledge, ask_clarification, resolve_all
 
 log = logging.getLogger("kraftsync.api")
 MAX_FORECAST_DAYS = 60   # sanity bound on dates the LLM reports, relative to today
@@ -74,7 +77,7 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
     settings = settings or Settings.from_env()
     settings.validate()
     setup_logging(settings.log_path)
-    state = state or ProjectState(settings.plan_path, settings.events_path)
+    state = state or ProjectState(settings.plan_path, settings.events_path, settings.snapshot_path)
     log.info("service up | events=%d | webhook=%s | demo_today=%s | stage_redirect=%s | log=%s", len(state.events),
              "set" if settings.webhook_url else "off", settings.demo_today or "-",
              "on" if settings.redirect_chat_id else "off", settings.log_path.name if settings.log_path else "console only")
@@ -124,17 +127,39 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
     def now() -> datetime:
         return datetime.now().astimezone()
 
+    def recipient_for(person_id: str) -> Recipient:
+        p = state.persons[person_id]
+        return Recipient(person_id=p.id, name=p.name, telegram_chat_id=settings.redirect_chat_id or p.telegram_chat_id)
+
     def finalize(actions: list[Action]) -> tuple[list[Action], dict[str, Recipient]]:
         """Attach chat ids; in stage mode redirect everything to one chat, prefixed with the real recipient."""
         out, recipients = [], {}
         for a in actions:
-            p = state.persons[a.to_person_id]
             if settings.redirect_chat_id:
-                a = a.model_copy(update={"text": f"[an {p.name}] {a.text}"})
+                a = a.model_copy(update={"text": f"[an {state.persons[a.to_person_id].name}] {a.text}"})
             out.append(a)
-            recipients[p.id] = Recipient(
-                person_id=p.id, name=p.name, telegram_chat_id=settings.redirect_chat_id or p.telegram_chat_id)
+            recipients[a.to_person_id] = recipient_for(a.to_person_id)
         return out, recipients
+
+    def action_out(a: Action) -> ActionOut:
+        return ActionOut(**a.model_dump(), recipient=recipient_for(a.to_person_id), detail=state.action_detail.get(a.id))
+
+    def build_state() -> StateResponse:
+        fc = forecast(state.tasks, state.deps)
+        views = [TaskView(**t.model_dump(), cpm_start=fc[t.id][0], cpm_finish=fc[t.id][1]) for t in state.tasks.values()]
+        base = {t.id: t for t in state.plan.tasks}
+        return StateResponse(
+            project_id=state.plan.project_id, name=state.plan.name, today=today(),
+            project_finish_planned=project_finish(forecast(base, state.deps), base, state.deps),
+            project_finish_forecast=project_finish(fc, state.tasks, state.deps),
+            tasks=views, dependencies=state.deps, open_discrepancies=list(state.discrepancies))
+
+    def persist() -> None:
+        """Rewrite the live graph snapshot (data/live/graph.json). Never fails a request."""
+        try:
+            state.write_snapshot(build_state().model_dump_json(indent=2))
+        except OSError as exc:   # e.g. a reader holds the file on Windows; the next change rewrites it
+            log.warning("snapshot write failed: %s", type(exc).__name__)
 
     def process_claim(u: TaskUpdate, req: UpdateRequest, sender, t: datetime, day: date) -> ClaimResult:
         if state.has_message(u.message_id):
@@ -190,11 +215,20 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
                 payload={"channel": req.channel.value, "chat_ref": req.chat_ref, "text": req.text})
         results = [process_claim(u, req, sender, t, day) for u in req.updates]
 
+        applied = [(r, u) for r, u in zip(results, req.updates) if r.status == "applied"]
+        if sender and applied and state.has_open_clarification(sender.id):   # this message answers our question
+            informed = {a.to_person_id for r, _ in applied for a in r.actions} - {sender.id}
+            names = list(dict.fromkeys(state.tasks[u.task_id].name for _, u in applied))
+            applied[0][0].actions.append(acknowledge(
+                sender, names, [state.persons[i].name for i in sorted(informed)], applied[0][0].message_id, t))
+
         order = ["applied", "needs_clarification", "ignored", "duplicate"]
         recipients: dict[str, Recipient] = {}
         for r in results:
             r.actions, rec = finalize(r.actions)
             recipients |= rec
+            for act in r.actions:   # outbox: the notifier pulls/receives these and reports back
+                r.events.append(state.record_action(act, t, r.message_id))
         return UpdateResponse(
             status=min((r.status for r in results), key=order.index),
             results=results,
@@ -223,6 +257,7 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
     def updates(req: UpdateRequest, background: BackgroundTasks, request: Request) -> UpdateResponse:
         with state.lock:
             resp = process(req)
+            persist()
             who = state.resolve_sender(req.sender_id)
             claims = " ; ".join(
                 f"{u.message_id} {u.kind.value} {u.task_id} c={u.confidence:.2f} -> {r.status}"
@@ -239,15 +274,30 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
     @app.get("/state", response_model=StateResponse, dependencies=[api])
     def get_state() -> StateResponse:
         with state.lock:
-            fc = forecast(state.tasks, state.deps)
-            views = [TaskView(**t.model_dump(), cpm_start=fc[t.id][0], cpm_finish=fc[t.id][1])
-                     for t in state.tasks.values()]
-            base = {t.id: t for t in state.plan.tasks}
-            return StateResponse(
-                project_id=state.plan.project_id, name=state.plan.name, today=today(),
-                project_finish_planned=project_finish(forecast(base, state.deps), base, state.deps),
-                project_finish_forecast=project_finish(fc, state.tasks, state.deps),
-                tasks=views, dependencies=state.deps, open_discrepancies=list(state.discrepancies))
+            return build_state()
+
+    @app.get("/actions", response_model=list[ActionOut], dependencies=[api])
+    def get_actions(request: Request,
+                    status: Literal["open", "drafted", "sent", "failed", "all"] = "open") -> list[ActionOut]:
+        """The outbox. `open` (default) = drafted + failed = still to send."""
+        wanted = {"open": {ActionStatus.drafted, ActionStatus.failed}, "all": set(ActionStatus)}.get(status) or {ActionStatus(status)}
+        with state.lock:
+            out = [action_out(a) for a in state.actions.values() if a.status in wanted]
+        request.state.log = f"status={status} n={len(out)}"
+        return out
+
+    @app.post("/actions/result", response_model=ActionOut, dependencies=[api])
+    def post_action_result(req: ActionResultRequest, request: Request) -> ActionOut:
+        with state.lock:
+            try:
+                a = state.record_action_result(req.action_id, ActionStatus(req.status), req.detail, now())
+            except KeyError:
+                raise HTTPException(404, "unknown action_id")
+            except ValueError as exc:
+                raise HTTPException(409, str(exc))
+            persist()
+            request.state.log = f"{a.to_person_id} {a.kind.value} -> {a.status.value}" + (f" ({req.detail})" if req.detail else "")
+            return action_out(a)
 
     @app.get("/events", response_model=list[GraphEvent], dependencies=[api])
     def get_events(since: int = 0) -> list[GraphEvent]:
@@ -257,7 +307,9 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
     @app.post("/reset", dependencies=[api])
     def reset(request: Request) -> dict:
         state.reset()
-        request.state.log = "plan reloaded, event log cleared"
+        persist()
+        request.state.log = "baseline reloaded, live events cleared"
         return {"ok": True, "tasks": len(state.tasks)}
 
+    persist()   # data/live/graph.json exists from the first start on
     return app
