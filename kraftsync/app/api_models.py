@@ -49,6 +49,18 @@ class Recipient(BaseModel):
 
 
 Status = Literal["applied", "needs_clarification", "ignored", "duplicate"]
+DocumentCategory = Literal["bim_models", "drawings_plans", "schedules", "financial_documents"]
+
+
+class DocumentView(BaseModel):
+    id: str
+    original_filename: str
+    category: DocumentCategory
+    file_size: int
+    uploaded_at: datetime
+    revision_label: str | None = None
+    location_ref: str | None = None
+    task_ref: str | None = None
 
 
 class ActionOut(Action):

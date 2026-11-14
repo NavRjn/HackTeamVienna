@@ -9,6 +9,7 @@ export const statusNames = {
 export const statusText = status => statusNames[status] ?? human(status);
 export const isDelayed = task => task.status !== 'done' && task.status !== 'cancelled'
   && task.cpm_finish && task.cpm_finish > task.planned_finish;
+export const locationGroup = id => /^(T\d+)(?:-|$)/.exec(id)?.[1] ?? id;
 
 const record = value => value && typeof value === 'object' && !Array.isArray(value);
 const string = value => typeof value === 'string';

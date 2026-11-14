@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 
 from kraftsync.app.api_models import (
     ClaimResult,
@@ -22,6 +23,8 @@ from kraftsync.app.api_models import (
     ContextResponse,
     ActionOut,
     ActionResultRequest,
+    DocumentCategory,
+    DocumentView,
     Recipient,
     StateResponse,
     TaskView,
@@ -29,6 +32,7 @@ from kraftsync.app.api_models import (
     UpdateResponse,
 )
 from kraftsync.app.settings import Settings
+from kraftsync.app.documents import DocumentStore, MEDIA_TYPES
 from kraftsync.app.state import ProjectState
 from kraftsync.contracts import Action, ActionStatus, EventKind, GraphEvent, TaskUpdate, UpdateKind
 from kraftsync.engine.check import check, forecast, project_finish
@@ -62,6 +66,7 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
             handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%Y-%m-%d %H:%M:%S"))
             logger.addHandler(handler)
     state = state or ProjectState(settings.plan_path, settings.events_path, settings.snapshot_path)
+    documents = DocumentStore(settings.documents_path)
     token = settings.token.encode()
     docs_on = settings.docs and settings.loopback
 
@@ -251,6 +256,29 @@ def create_app(settings: Settings | None = None, state: ProjectState | None = No
     def get_events(since: int = 0) -> list[GraphEvent]:
         with state.lock:
             return [e for e in state.events if (e.id or 0) > since]
+
+    @app.get("/documents", response_model=list[DocumentView], dependencies=[api])
+    def list_documents() -> list[DocumentView]:
+        return [DocumentView(**item) for item in documents.list()]
+
+    @app.post("/documents", response_model=DocumentView, status_code=201, dependencies=[api])
+    async def upload_document(
+        file: UploadFile = File(...),
+        category: DocumentCategory = Form(...),
+        revision_label: str | None = Form(default=None),
+        location_ref: str | None = Form(default=None),
+        task_ref: str | None = Form(default=None),
+    ) -> DocumentView:
+        record = await documents.save(file, category, revision_label, location_ref, task_ref)
+        return DocumentView(**record)
+
+    @app.get("/documents/{document_id}/content", dependencies=[api])
+    def document_content(document_id: str, inline: bool = False) -> FileResponse:
+        document, path, extension = documents.file(document_id)
+        return FileResponse(
+            path, media_type=MEDIA_TYPES[extension], filename=document["original_filename"],
+            content_disposition_type="inline" if inline else "attachment",
+        )
 
     @app.post("/reset", dependencies=[api])
     def reset() -> dict:

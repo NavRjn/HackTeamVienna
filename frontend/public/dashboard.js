@@ -1,5 +1,6 @@
-import { dayDiff, ordinal, human, statusText, isDelayed, readState, readEvents } from './data.js';
+import { dayDiff, ordinal, human, statusText, isDelayed, locationGroup, readState, readEvents } from './data.js';
 import { graph } from './graph.js';
+import { initBimViewer, openIfcFile } from './bim-viewer.js';
 
 const $ = id => document.getElementById(id);
 const node = (tag, className, text) => {
@@ -24,9 +25,15 @@ const taskLink = (id, label) => {
 const filters = ['location', 'trade', 'status', 'assignee', 'severity'];
 let state, stateSignature, eventSignature, graphView;
 let events = [];
+let actions = [];
+let actionSignature;
 let view = 'graph';
 let selected;
 let selectedIssue;
+let graphScope;
+let bimStarted = false;
+let documents = [];
+let documentPreviewUrl;
 let issuesById = new Map();
 let tasksById = new Map();
 
@@ -43,8 +50,23 @@ function chooseView(next) {
     if (button.dataset.view === view) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   }
-  $('filters').hidden = view === 'activity';
+  $('filters').hidden = ['activity', 'bim', 'documents'].includes(view);
   $('severity-filter').hidden = view !== 'issues';
+  $('view').hidden = view === 'bim' || view === 'documents';
+  $('detail').hidden = view === 'bim' || view === 'documents';
+  $('bim-view').hidden = view !== 'bim';
+  $('documents-view').hidden = view !== 'documents';
+  if (view === 'bim' && !bimStarted) {
+    bimStarted = true;
+    try {
+      initBimViewer();
+    } catch (error) {
+      const status = $('bim-status');
+      status.textContent = 'Could not start the IFC viewer: ' + (error.message || 'WebGL is unavailable.');
+      status.dataset.state = 'error';
+    }
+  }
+  if (view === 'documents') void loadDocuments();
   render();
 }
 $('views').addEventListener('click', event => {
@@ -53,6 +75,37 @@ $('views').addEventListener('click', event => {
 });
 for (const id of filters) $(id).addEventListener('change', render);
 $('search').addEventListener('input', render);
+$('document-search').addEventListener('input', renderDocuments);
+$('document-sort').addEventListener('change', renderDocuments);
+$('document-form').elements.category.addEventListener('change', event => {
+  const accepts = {
+    bim_models: '.ifc', drawings_plans: '.pdf,.jpg,.jpeg,.png', schedules: '.csv,.xlsx',
+    financial_documents: '.pdf',
+  };
+  $('document-file').accept = accepts[event.target.value];
+});
+$('document-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const file = $('document-file').files[0];
+  if (!file) return;
+  const status = $('document-status');
+  status.dataset.state = 'loading';
+  status.textContent = 'Uploading ' + file.name + '…';
+  try {
+    const response = await fetch('/api/documents', { method: 'POST', body: new FormData(form) });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail || 'Upload failed.');
+    form.reset();
+    $('document-file').accept = '.ifc';
+    status.dataset.state = 'success';
+    status.textContent = 'Uploaded ' + body.original_filename + (body.revision_label ? ' · ' + body.revision_label : '');
+    await loadDocuments();
+  } catch (error) {
+    status.dataset.state = 'error';
+    status.textContent = 'Upload failed: ' + error.message;
+  }
+});
 
 function choices(id, values, label = human) {
   const select = $(id);
@@ -67,6 +120,8 @@ function installState(project) {
   issuesById = new Map(project.open_discrepancies.map(issue => [issue.id, issue]));
   if (!tasksById.has(selected)) selected = undefined;
   if (!issuesById.has(selectedIssue)) selectedIssue = undefined;
+  const scopes = [...new Set(project.tasks.map(task => locationGroup(task.location_id)))];
+  if (!scopes.includes(graphScope)) graphScope = scopes.includes('T6') ? 'T6' : scopes.includes('T5') ? 'T5' : '';
   $('project').textContent = state.name;
   $('data-date').textContent = 'Schedule date · ' + date(state.today);
   choices('location', state.tasks.map(t => t.location_id), value => value);
@@ -79,23 +134,30 @@ function installState(project) {
   const delta = planned && forecast ? dayDiff(planned, forecast) : null;
   const shift = delta === null ? 'Forecast comparison unavailable' : delta > 0 ? '+' + delta + ' days late'
     : delta < 0 ? Math.abs(delta) + ' days early' : 'On plan';
-  $('handover').replaceChildren(node('p', 'eyebrow', 'PROJECT HANDOVER'), node('strong', 'forecast', date(forecast)),
-    node('p', 'muted', 'Planned · ' + date(planned)), node('span', 'pill ' + (delta > 0 ? 'warning' : 'info'), shift));
+  const deltaLabel = delta === null ? '—' : delta > 0 ? '+' + delta + 'd' : delta < 0 ? '−' + Math.abs(delta) + 'd' : '0d';
+  const handoverDates = node('div', 'handover-dates');
+  handoverDates.append(node('span', 'muted', 'PLANNED'), node('strong', '', date(planned)),
+    node('span', 'muted', 'FORECAST'), node('strong', '', date(forecast)));
+  $('handover').replaceChildren(node('p', 'eyebrow', 'PROJECT HANDOVER'),
+    node('strong', 'handover-shift ' + (delta > 0 ? 'late' : delta < 0 ? 'early' : ''), deltaLabel),
+    node('span', 'handover-shift-copy', shift), handoverDates);
   const active = state.tasks.filter(t => t.status !== 'cancelled');
   const progress = active.length ? Math.round(active.reduce((sum, t) => sum + t.percent_complete, 0) / active.length) + '%' : '—';
+  const critical = state.open_discrepancies.filter(issue => issue.status === 'open' && issue.severity === 'critical').length;
   $('metrics').replaceChildren(...[
-    ['Task progress', progress, 'Average of active task completion'],
+    ['Progress', progress, 'Mean completion · active tasks'],
     ['Completed', active.filter(t => t.status === 'done').length],
     ['In progress', active.filter(t => t.status === 'in_progress').length],
     ['Blocked', active.filter(t => t.status === 'blocked').length],
     ['Not started', active.filter(t => t.status === 'not_started').length],
-    ['Open issues', state.open_discrepancies.filter(issue => issue.status === 'open').length],
+    ['Critical issues', critical],
   ].map(([label, value, description]) => {
     const card = node('div', 'metric');
     card.append(node('p', '', label), node('strong', '', value));
     if (description) card.append(node('small', 'muted', description));
     return card;
   }));
+  $('loading').hidden = true;
   $('workspace').hidden = false;
 }
 
@@ -177,14 +239,23 @@ function renderDetail(impact) {
 }
 function renderSchedule(tasks) {
   const panel = node('div', 'schedule');
-  panel.append(node('p', 'muted', 'Dark bars show planned dates. Color shows backend-computed dates. Missing computed dates are shown as —.'));
+  const legend = node('div', 'schedule-legend');
+  legend.append(node('span', '', 'Planned'), node('span', '', 'Backend forecast'));
+  panel.append(node('p', 'muted', 'Baseline and computed dates from the project state.'), legend);
   if (!tasks.length) return panel;
   const min = Math.min(...tasks.flatMap(t => [t.planned_start, t.cpm_start].filter(Boolean).map(ordinal)));
   const max = Math.max(...tasks.flatMap(t => [t.planned_finish, t.cpm_finish].filter(Boolean).map(ordinal)));
   const days = Math.max(1, max - min + 1);
+  const ruler = node('div', 'date-ruler');
+  for (let offset = 0; offset < days; offset += 7) {
+    const marker = node('span', '', date(new Date((min + offset) * 86400000).toISOString().slice(0, 10)));
+    marker.style.left = (offset * 100 / days) + '%';
+    ruler.append(marker);
+  }
   function bar(start, finish, type) {
     if (!start || !finish) return node('div', 'bar-missing', '—');
     const track = node('div', 'track');
+    track.style.backgroundSize = Math.max(7 * 100 / days, 0.5) + '% 100%';
     const segment = node('span', 'bar ' + type);
     segment.style.left = ((ordinal(start) - min) * 100 / days) + '%';
     segment.style.width = (Math.max(1, dayDiff(start, finish) + 1) * 100 / days) + '%';
@@ -194,7 +265,9 @@ function renderSchedule(tasks) {
   const range = node('div', 'schedule-range');
   range.append(node('span', '', date(new Date(min * 86400000).toISOString().slice(0, 10))),
     node('span', '', date(new Date(max * 86400000).toISOString().slice(0, 10))));
-  panel.append(range);
+  const scheduleHead = node('div', 'schedule-head');
+  scheduleHead.append(node('span', '', 'TASK'), ruler, node('span', '', 'PLAN / FORECAST'));
+  panel.append(scheduleHead, range);
   for (const task of [...tasks].sort((a, b) => a.planned_start.localeCompare(b.planned_start))) {
     const row = node('div', 'schedule-row' + (task.id === selected ? ' active' : ''));
     const heading = node('div');
@@ -205,6 +278,11 @@ function renderSchedule(tasks) {
     const dates = node('div', 'dates muted');
     dates.append(node('small', '', date(task.planned_start) + ' → ' + date(task.planned_finish)),
       node('small', '', date(task.cpm_start) + ' → ' + date(task.cpm_finish)));
+    const finishShift = task.cpm_finish ? dayDiff(task.planned_finish, task.cpm_finish) : null;
+    if (finishShift !== null && finishShift !== 0) {
+      dates.append(node('span', 'schedule-shift ' + (finishShift > 0 ? 'late' : 'early'),
+        (finishShift > 0 ? '+' : '−') + Math.abs(finishShift) + 'd finish shift'));
+    }
     row.append(heading, bars, dates);
     panel.append(row);
   }
@@ -212,8 +290,26 @@ function renderSchedule(tasks) {
 }
 function renderActivity() {
   const list = node('div', 'event-list');
-  if (!events.length) list.append(node('p', 'muted', 'No events have been recorded.'));
-  for (const event of [...events].sort((a, b) => (b.id ?? 0) - (a.id ?? 0) || Date.parse(b.ts) - Date.parse(a.ts))) {
+  if (!events.length && !actions.length) {
+    const empty = node('div', 'empty-state');
+    empty.append(node('strong', '', 'No activity recorded'),
+      node('span', 'muted', 'No audit events have been returned by the backend.'));
+    list.append(empty);
+  }
+  if (actions.length) {
+    list.append(node('h3', 'notification-heading', 'Notification status'));
+    const statusTone = { drafted: 'warning', sent: 'info', failed: 'critical' };
+    for (const action of [...actions].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))) {
+      const entry = node('article', 'event notification-event');
+      const heading = node('div', 'notification-head');
+      heading.append(node('h3', '', human(action.kind)), node('span', 'pill ' + statusTone[action.status], human(action.status)));
+      entry.append(heading, node('p', 'muted', time(action.created_at) + ' · ' + action.recipient.name),
+        node('p', '', action.text));
+      if (action.detail) entry.append(node('small', 'muted', action.detail));
+      list.append(entry);
+    }
+  }
+  for (const event of [...events].sort((a, b) => (a.id ?? 0) - (b.id ?? 0) || Date.parse(a.ts) - Date.parse(b.ts))) {
     const entry = node('article', 'event');
     entry.append(node('h3', '', human(event.kind)), node('p', 'muted', time(event.ts) + ' · ' + event.actor + ' · #' + (event.id ?? '—')));
     if (tasksById.has(event.task_id)) entry.append(taskLink(event.task_id, tasksById.get(event.task_id).name));
@@ -228,7 +324,7 @@ function renderActivity() {
   return list;
 }
 function render() {
-  if (!state) return;
+  if (!state || view === 'bim') return;
   const panel = $('view');
   const oldOpen = new Set([...panel.querySelectorAll('details[open]')].map(element => element.dataset.event));
   const relevant = state.tasks.filter(matches);
@@ -240,14 +336,26 @@ function render() {
   if (view === 'graph') {
     const camera = graphView?.camera();
     const header = node('div', 'view-head');
-    header.append(node('h2', '', 'Dependency graph'), node('p', 'muted', relevant.length + ' of ' + state.tasks.length
-      + ' tasks · lanes by location ID · green outlines mark affected tasks'));
+    const title = node('div');
+    title.append(node('h2', '', 'Dependency graph'), node('p', 'muted', relevant.length + ' of ' + state.tasks.length
+      + ' tasks match filters · impact IDs are backend-reported'));
+    const focusLabel = node('label', 'graph-focus', 'LOCATION FOCUS');
+    const focus = node('select');
+    focus.setAttribute('aria-label', 'Graph location focus');
+    focus.add(new Option('All locations', ''));
+    for (const group of [...new Set(state.tasks.map(task => locationGroup(task.location_id)))].sort()) {
+      focus.add(new Option(group + ' locations', group));
+    }
+    focus.value = graphScope;
+    focus.addEventListener('change', () => { graphScope = focus.value; render(); });
+    focusLabel.append(focus);
+    header.append(title, focusLabel);
     const flagged = new Set(state.open_discrepancies.filter(issue => issue.status === 'open').map(issue => issue.task_id));
-    graphView = graph(state.tasks, state.dependencies, visible, selected, impact, flagged, chooseTask);
+    graphView = graph(state.tasks, state.dependencies, visible, selected, impact, flagged, chooseTask, graphScope);
     panel.replaceChildren(header);
     panel.append(graphView.element);
     if (selectedIssue && impactIssues[0]) panel.append(issueCard(impactIssues[0]));
-    if (camera) graphView.restore(camera);
+    if (camera && camera.scope === graphScope) graphView.restore(camera);
     else if (state.tasks.length) graphView.fit();
   } else if (view === 'schedule') {
     panel.replaceChildren(node('h2', '', 'Planned vs computed schedule'), renderSchedule(relevant));
@@ -257,10 +365,141 @@ function render() {
     const rank = { critical: 0, warning: 1, info: 2 };
     issues.sort((a, b) => rank[a.severity] - rank[b.severity] || Date.parse(b.detected_at) - Date.parse(a.detected_at));
     panel.replaceChildren(node('h2', '', 'Issues'), ...issues.map(issueCard));
-    if (!issues.length) panel.append(node('p', 'muted', 'No issues match these filters.'));
+    if (!issues.length) {
+      const empty = node('div', 'empty-state');
+      empty.append(node('strong', '', state.open_discrepancies.length ? 'No issues match these filters' : 'No open discrepancies'),
+        node('span', 'muted', state.open_discrepancies.length
+          ? 'Try another task or severity filter.'
+          : 'The backend has not reported any open issues.'));
+      panel.append(empty);
+    }
   } else {
     panel.replaceChildren(node('h2', '', 'Activity'), renderActivity());
     for (const detail of panel.querySelectorAll('details')) detail.open = oldOpen.has(detail.dataset.event);
+  }
+}
+
+const documentCategories = {
+  bim_models: 'BIM Models', drawings_plans: 'Drawings & Plans', schedules: 'Schedules',
+  financial_documents: 'Financial Documents',
+};
+const fileSize = bytes => bytes < 1024 * 1024 ? Math.ceil(bytes / 1024) + ' KB'
+  : (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+async function loadDocuments() {
+  const status = $('document-status');
+  if (!documents.length) {
+    status.dataset.state = 'loading';
+    status.textContent = 'Loading document library…';
+  }
+  try {
+    const response = await fetch('/api/documents', { cache: 'no-store' });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail || 'Could not load documents.');
+    documents = body;
+    if (status.dataset.state === 'loading') {
+      status.dataset.state = '';
+      status.textContent = 'Maximum file size: 100 MB.';
+    }
+    renderDocuments();
+  } catch (error) {
+    status.dataset.state = 'error';
+    status.textContent = 'Could not load documents: ' + error.message;
+  }
+}
+function renderDocuments() {
+  const query = $('document-search').value.trim().toLowerCase();
+  const sort = $('document-sort').value;
+  const entries = documents.filter(item => [item.original_filename, item.revision_label, item.location_ref, item.task_ref]
+    .some(value => value?.toLowerCase().includes(query)) || !query);
+  entries.sort((a, b) => sort === 'oldest' ? a.uploaded_at.localeCompare(b.uploaded_at)
+    : sort === 'name' ? a.original_filename.localeCompare(b.original_filename)
+      : sort === 'category' ? documentCategories[a.category].localeCompare(documentCategories[b.category])
+        : b.uploaded_at.localeCompare(a.uploaded_at));
+  $('document-count').textContent = '(' + entries.length + ')';
+  const list = $('document-list');
+  list.replaceChildren();
+  if (!entries.length) {
+    list.append(node('p', 'muted document-empty', documents.length ? 'No documents match this search.' : 'No documents uploaded yet.'));
+    return;
+  }
+  for (const item of entries) {
+    const row = node('article', 'document-row');
+    const info = node('div');
+    info.append(node('strong', '', item.original_filename),
+      node('small', 'muted', documentCategories[item.category] + ' · ' + fileSize(item.file_size) + ' · ' + time(item.uploaded_at)));
+    const refs = [item.revision_label, item.location_ref, item.task_ref].filter(Boolean).join(' · ');
+    if (refs) info.append(node('small', 'muted', refs));
+    const actions = node('div', 'document-actions');
+    if (/\.(pdf|jpe?g|png)$/i.test(item.original_filename)) {
+      const preview = node('button', 'outline', 'Preview');
+      preview.addEventListener('click', () => void previewDocument(item));
+      actions.append(preview);
+    }
+    const download = node('button', 'outline', 'Download');
+    download.addEventListener('click', () => void downloadDocument(item));
+    actions.append(download);
+    if (/\.ifc$/i.test(item.original_filename)) {
+      const open = node('button', 'outline', 'Open in 3D');
+      open.addEventListener('click', () => void openStoredIfc(item));
+      actions.append(open);
+    }
+    row.append(info, actions);
+    list.append(row);
+  }
+}
+async function getDocumentBlob(item, inline = false) {
+  const response = await fetch('/api/documents/' + item.id + '/content' + (inline ? '?inline=true' : ''), { cache: 'no-store' });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail || 'Document request failed.');
+  }
+  return response.blob();
+}
+async function previewDocument(item) {
+  try {
+    const blob = await getDocumentBlob(item, true);
+    if (documentPreviewUrl) URL.revokeObjectURL(documentPreviewUrl);
+    documentPreviewUrl = URL.createObjectURL(blob);
+    const pane = $('document-preview');
+    pane.replaceChildren(node('h2', '', item.original_filename));
+    if (/\.pdf$/i.test(item.original_filename)) {
+      const frame = node('iframe', 'document-frame');
+      frame.src = documentPreviewUrl;
+      frame.title = item.original_filename;
+      pane.append(frame);
+    } else {
+      const image = node('img', 'document-image');
+      image.src = documentPreviewUrl;
+      image.alt = item.original_filename;
+      pane.append(image);
+    }
+  } catch (error) {
+    $('document-preview').replaceChildren(node('h2', '', 'Preview unavailable'), node('p', 'muted', error.message));
+  }
+}
+async function downloadDocument(item) {
+  try {
+    const blob = await getDocumentBlob(item);
+    const url = URL.createObjectURL(blob);
+    const link = node('a');
+    link.href = url;
+    link.download = item.original_filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    $('document-status').dataset.state = 'error';
+    $('document-status').textContent = 'Download failed: ' + error.message;
+  }
+}
+async function openStoredIfc(item) {
+  try {
+    const blob = await getDocumentBlob(item);
+    const file = new File([blob], item.original_filename, { type: blob.type || 'application/x-step' });
+    chooseView('bim');
+    openIfcFile(file);
+  } catch (error) {
+    $('document-status').dataset.state = 'error';
+    $('document-status').textContent = 'Could not open IFC: ' + error.message;
   }
 }
 
@@ -270,10 +509,22 @@ async function api(path, validate) {
   if (!response.ok) throw new Error(typeof body?.detail === 'string' ? body.detail : 'Dashboard API returned HTTP ' + response.status + '.');
   return validate(body);
 }
+function readActions(value) {
+  if (!Array.isArray(value) || !value.every(action => action && typeof action.id === 'string'
+      && typeof action.kind === 'string' && typeof action.text === 'string'
+      && ['drafted', 'sent', 'failed'].includes(action.status)
+      && typeof action.created_at === 'string' && action.recipient && typeof action.recipient.name === 'string')) {
+    throw new Error('Unexpected notification status response from the backend.');
+  }
+  return value;
+}
 async function poll() {
   let stateChanged = false;
   let eventsChanged = false;
-  const [project, audit] = await Promise.allSettled([api('/api/state', readState), api('/api/events', readEvents)]);
+  let actionsChanged = false;
+  const [project, audit, outbox] = await Promise.allSettled([
+    api('/api/state', readState), api('/api/events', readEvents), api('/api/actions', readActions),
+  ]);
   const failures = [];
   if (project.status === 'fulfilled') {
     const signature = JSON.stringify(project.value);
@@ -291,14 +542,25 @@ async function poll() {
       eventsChanged = true;
     }
   } else failures.push('Activity · ' + audit.reason.message);
-  const label = project.status === 'rejected' ? 'Disconnected' : failures.length ? 'Activity disconnected' : 'Live API';
+  if (outbox.status === 'fulfilled') {
+    const signature = JSON.stringify(outbox.value);
+    if (signature !== actionSignature) {
+      actions = outbox.value;
+      actionSignature = signature;
+      actionsChanged = true;
+    }
+  } else failures.push('Notifications · ' + outbox.reason.message);
+  const label = project.status === 'rejected'
+    ? state ? 'API disconnected · stale' : 'API disconnected'
+    : failures.length ? 'API partial · some data unavailable' : 'API live';
   if ($('connection').textContent !== label) $('connection').textContent = label;
-  $('connection').dataset.live = String(!failures.length);
+  $('connection').dataset.live = String(project.status === 'fulfilled');
+  if (!state && project.status === 'rejected') $('loading').textContent = 'Project state is unavailable. Check the dashboard API connection.';
   const notice = $('network-error');
   notice.hidden = !failures.length;
   const message = failures.join(' · ') + (state && failures.length ? ' Some displayed data may be stale.' : '');
   if (notice.textContent !== message) notice.textContent = message;
-  if (stateChanged || (view === 'activity' && eventsChanged)) render();
+  if (stateChanged || (view === 'activity' && (eventsChanged || actionsChanged))) render();
   setTimeout(poll, 2000);
 }
 poll();

@@ -170,6 +170,18 @@ def test_harmless_update_does_not_call_hook(client, hooks):
     assert hooks == []
 
 
+def test_actions_outbox_and_delivery_status(client):
+    message = next(m for m in gold_messages() if m["id"] == "demo:02")
+    assert client.post("/updates", json=body(message), headers=H).status_code == 200
+    actions = client.get("/actions?status=all", headers=H)
+    assert actions.status_code == 200 and actions.json()
+    action = actions.json()[0]
+    assert action["status"] == "drafted" and action["recipient"]["name"]
+    result = client.post("/actions/result", headers=H,
+                         json={"action_id": action["id"], "status": "sent"})
+    assert result.status_code == 200 and result.json()["status"] == "sent"
+
+
 def test_low_confidence_asks_instead_of_applying(client, hooks):
     ms = {m["id"]: m for m in gold_messages()}
     r = client.post("/updates", json=body(ms["demo:01"], confidence=0.3), headers=H).json()

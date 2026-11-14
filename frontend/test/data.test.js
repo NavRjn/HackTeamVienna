@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { dayDiff, graphRanks, readEvents, readState } from '../public/data.js';
+import { dayDiff, graphRanks, locationGroup, readEvents, readState } from '../public/data.js';
 
 const plan = JSON.parse(readFileSync(new URL('../../data/demo/plan.json', import.meta.url)));
 const demoState = {
@@ -25,6 +25,12 @@ test('graph layout follows every directed demo dependency', () => {
   for (const edge of demoState.dependencies) {
     assert.ok(ranks.get(edge.predecessor_id) < ranks.get(edge.successor_id), edge.id);
   }
+});
+
+test('location focus groups use backend location IDs without inventing labels', () => {
+  assert.equal(locationGroup('T5-BATH'), 'T5');
+  assert.equal(locationGroup('T6'), 'T6');
+  assert.equal(locationGroup('F2'), 'F2');
 });
 
 test('rejects dangling edges, invalid dates and invalid event responses', () => {

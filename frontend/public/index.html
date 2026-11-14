@@ -8,18 +8,29 @@
   <script type="module" src="/dashboard.js"></script>
 </head>
 <body>
-  <header class="topbar"><div class="brand"><span class="mark" aria-hidden="true">K</span>KraftSync</div><span class="connection" id="connection" role="status">Connecting to API</span></header>
-  <main>
-    <section class="mast"><div><p class="eyebrow">SITE OPERATIONS</p><h1 id="project">Project dashboard</h1><p id="data-date" class="muted"></p></div><div id="handover" class="handover"></div></section>
-    <p id="network-error" class="notice" role="status" hidden></p>
-    <div id="workspace" hidden>
-      <section id="metrics" class="metrics" aria-label="Project metrics"></section>
+  <header class="topbar">
+    <div class="brand"><span class="mark" aria-hidden="true">K</span><span>KraftSync</span></div>
+    <div class="connection-wrap"><span class="eyebrow">DASHBOARD API</span><span class="connection" id="connection" role="status">Connecting</span></div>
+  </header>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Project navigation">
+      <p class="eyebrow">WORKSPACE</p>
       <nav id="views" aria-label="Project views">
-        <button type="button" data-view="graph" aria-current="page">Dependency graph</button>
-        <button type="button" data-view="schedule">Schedule</button>
-        <button type="button" data-view="issues">Issues</button>
-        <button type="button" data-view="activity">Activity</button>
+        <button type="button" data-view="graph" aria-current="page"><span>01</span>Dependency graph</button>
+        <button type="button" data-view="schedule"><span>02</span>Schedule</button>
+        <button type="button" data-view="issues"><span>03</span>Issues</button>
+        <button type="button" data-view="activity"><span>04</span>Activity</button>
+        <button type="button" data-view="bim"><span>05</span>3D Building</button>
+          <button type="button" data-view="documents"><span>06</span>Documents</button>
       </nav>
+      <div class="sidebar-foot"><span class="live-dot" aria-hidden="true"></span><span>FastAPI read connection</span></div>
+    </aside>
+    <main>
+      <section class="mast"><div><p class="eyebrow">SITE OPERATIONS</p><h1 id="project">Project dashboard</h1><p id="data-date" class="muted"></p></div><div id="handover" class="handover"></div></section>
+      <p id="network-error" class="notice" role="status" hidden></p>
+      <p id="loading" class="loading" role="status">Waiting for project state from the dashboard API...</p>
+      <div id="workspace" hidden>
+      <section id="metrics" class="metrics" aria-label="Project metrics"></section>
       <section class="filters" id="filters" aria-label="Filters">
         <label>Search tasks<input id="search" type="search" placeholder="Name or task ID"></label>
         <label>Location<select id="location"></select></label>
@@ -32,7 +43,62 @@
         <section class="panel" id="view"></section>
         <aside class="panel detail" id="detail" aria-label="Task details"></aside>
       </div>
-    </div>
-  </main>
+      <section id="bim-view" class="panel bim-view" aria-label="3D Building viewer" hidden>
+        <div class="bim-toolbar">
+          <label class="outline bim-file">Open IFC<input id="ifc-file" type="file" accept=".ifc,application/x-step"></label>
+          <button type="button" class="outline" id="bim-fit">Fit / Reset Camera</button>
+          <div class="bim-navigation" aria-label="Camera controls">
+            <button type="button" class="outline" data-bim-rotate="left" aria-label="Rotate left" title="Rotate left">←</button>
+            <button type="button" class="outline" data-bim-rotate="up" aria-label="Rotate up" title="Rotate up">↑</button>
+            <button type="button" class="outline" data-bim-rotate="down" aria-label="Rotate down" title="Rotate down">↓</button>
+            <button type="button" class="outline" data-bim-rotate="right" aria-label="Rotate right" title="Rotate right">→</button>
+            <button type="button" class="outline" data-bim-zoom="in" aria-label="Zoom in" title="Zoom in">+</button>
+            <button type="button" class="outline" data-bim-zoom="out" aria-label="Zoom out" title="Zoom out">−</button>
+          </div>
+          <label class="bim-toggle"><input id="bim-interior" type="checkbox"> Interior View</label>
+          <label class="bim-section-control">Section height <span id="bim-section-value">—</span>
+            <input id="bim-section" type="range" min="0" max="1" step="0.01" disabled>
+          </label>
+          <button type="button" class="outline" id="bim-full">Show Full Building</button>
+          <p id="bim-status" role="status">Choose an IFC file to view it locally.</p>
+        </div>
+        <div id="bim-stage" class="bim-stage"><canvas id="bim-canvas" aria-label="Interactive IFC building model"></canvas></div>
+      </section>
+      <section id="documents-view" class="documents-view" hidden>
+        <form id="document-form" class="panel document-upload">
+          <div><h2>Upload project document</h2><p class="muted">Files are stored locally on the KraftSync server.</p></div>
+          <label>File<input id="document-file" name="file" type="file" required></label>
+          <label>Category<select name="category" required>
+            <option value="bim_models">BIM Models · IFC</option>
+            <option value="drawings_plans">Drawings &amp; Plans · PDF, JPG, PNG</option>
+            <option value="schedules">Schedules · CSV, XLSX</option>
+            <option value="financial_documents">Financial Documents · PDF</option>
+          </select></label>
+          <label>Revision<input name="revision_label" maxlength="80" placeholder="e.g. Rev 02"></label>
+          <label>Location ID<input name="location_ref" maxlength="100"></label>
+          <label>Task ID<input name="task_ref" maxlength="100"></label>
+          <button class="outline" type="submit">Upload document</button>
+          <p id="document-status" role="status" class="muted">Maximum file size: 100 MB.</p>
+        </form>
+        <div class="documents-workspace">
+          <section class="panel document-library">
+            <div class="document-tools">
+              <h2>Project documents <span id="document-count"></span></h2>
+              <input id="document-search" type="search" placeholder="Search filename or reference" aria-label="Search documents">
+              <select id="document-sort" aria-label="Sort documents">
+                <option value="newest">Newest first</option><option value="oldest">Oldest first</option>
+                <option value="name">Filename</option><option value="category">Category</option>
+              </select>
+            </div>
+            <div id="document-list" class="document-list"></div>
+          </section>
+          <section id="document-preview" class="panel document-preview" aria-label="Document preview">
+            <h2>Preview</h2><p class="muted">Choose a PDF or image to preview.</p>
+          </section>
+        </div>
+      </section>
+      </div>
+    </main>
+  </div>
 </body>
 </html>

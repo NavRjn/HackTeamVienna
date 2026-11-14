@@ -28,6 +28,7 @@ class Settings:
     events_path: Path = REPO_ROOT / "data" / "live" / "events.jsonl"
     log_path: Path | None = None
     snapshot_path: Path | None = None
+    documents_path: Path = REPO_ROOT / "data" / "documents"
     webhook_url: str | None = None     # n8n webhook we call when there is a conflict
     webhook_token: str | None = None   # sent to n8n as X-KraftSync-Token (separate secret)
     confidence_min: float = 0.7
@@ -52,6 +53,7 @@ class Settings:
                 events_path=_path(e("EVENTS_PATH"), str(live / "events.jsonl")),
                 log_path=None if e("LOG_PATH") == "off" else _path(e("LOG_PATH"), str(live / "kraftsync.log")),
                 snapshot_path=live / "graph.json",
+                documents_path=_path(e("DOCUMENTS_PATH"), "data/documents"),
                 webhook_url=e("N8N_CONFLICT_WEBHOOK_URL") or None,
                 webhook_token=e("N8N_HOOK_TOKEN") or None,
                 confidence_min=float(e("CONFIDENCE_MIN") or 0.7),

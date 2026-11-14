@@ -28,9 +28,22 @@ Caveat: names are not authentication. Fine for the synthetic demo; for real use 
 | POST | `/updates` | n8n → one or more interpreted claims (`TaskUpdate`) from one message; we apply, check, resolve |
 | GET | `/state` | tasks (+ computed `cpm_start/cpm_finish`), dependencies, open discrepancies, planned vs forecast project finish |
 | GET | `/events?since=<id>` | append-only event log tail (UI feed) |
+| GET | `/actions?status=all` | authenticated notification outbox and delivery status |
+| POST | `/actions/result` | authenticated sent/failed notification result |
+| GET | `/documents` | authenticated project document metadata |
+| POST | `/documents` | authenticated multipart upload; stores immutable revision |
+| GET | `/documents/{id}/content` | authenticated download (`?inline=true` for preview) |
 | POST | `/reset` | reload the demo plan and clear the event log (demo only) |
 
 Both n8n calls are POSTs so names and message text never appear in URLs or logs.
+
+## Live runtime files
+The service writes append-only events, the derived `graph.json` snapshot, and its compact call log under `LIVE_DIR` (default `data/live/`). The directory is git-ignored. A legacy `EVENTS_PATH` value remains honored for existing installations.
+
+`GET /actions?status=all` returns drafted, sent, and failed notifications with recipient and detail. The default `status=open` returns drafted and failed actions. `/actions/result` records delivery status as append-only events.
+
+## Project documents
+Files are stored under the ignored `data/documents/` directory, with metadata in `metadata.json` and generated UUID filenames for content. Original filenames are metadata only; revisions append and never overwrite. Uploads are limited to 100 MB and validated by category, extension, and basic file signature. Categories are `bim_models` (IFC), `drawings_plans` (PDF/JPG/PNG), `schedules` (CSV/XLSX), and `financial_documents` (PDF). Optional multipart fields are `revision_label`, `location_ref`, and `task_ref`. Uploads do not alter project schedules.
 
 ### POST /context
 ```json
