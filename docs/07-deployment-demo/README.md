@@ -1,6 +1,6 @@
 # 07 · Deployment, UI & demo
 
-Goal: it runs somewhere reachable, it looks clear on a projector, and the submission is complete by **Sat 15:00**.
+Goal: it runs somewhere reachable and looks clear on a projector.
 
 ## Runtime layout
 
@@ -78,11 +78,3 @@ The API needs the token on every call: the page asks for it once and keeps it in
 - [ ] `POST /reset` between rehearsals.
 - [ ] Scripted messages printed on a card (from `data/demo/messages.jsonl`), in order.
 - [ ] Fallback if Telegram or Wi-Fi fails: n8n Manual Trigger with the scripted messages, or `curl` to `/updates`.
-- [ ] 3-min video recorded by **Sat 13:30** (end-to-end, real Telegram).
-
-## Submission (Discord form, by 15:00)
-
-- Repo: the repo carries an MIT `LICENSE`, but the Talona slide says Talona work goes to a private repository, not MIT. Check with the organisers.
-- README: setup, run, environment, architecture, assumptions (done). `.env.example`, no secrets.
-- 3-minute demo video.
-- Written submission: title, one-line pitch, team, problem, solution, stack, links.

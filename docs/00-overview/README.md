@@ -11,11 +11,11 @@ A construction schedule is a dependency graph (drywall → inspection → boardi
 - Reality lives in WhatsApp groups, phone calls and email — dozens of messages a day.
 - Nobody connects the two. A plumber's "pre-wall elements arrive Thursday" doesn't reach the drywaller who plans to close that wall Wednesday, or the inspector, or the site manager whose handover date just moved.
 
-Cost (cite these in the pitch):
+Cost:
 - Miscommunication and poor project data cause ~48% of all rework on US jobsites, ≈ $31.3 bn in 2018 (FMI / PlanGrid, *Construction Disconnected*).
 - Site teams spend ~35% of their time (14+ h/week) on non-productive work: looking for information, resolving conflicts, fixing mistakes (same study).
 - UK: avoidable errors ≈ 21% of project value (Get It Right Initiative).
-- Brief context: Talona cites $1.85 tn lost to bad data and miscommunication in 2020.
+- Context from the challenge brief: $1.85 tn lost to bad data and miscommunication in 2020.
 
 ## Who uses it
 
@@ -48,9 +48,9 @@ Project: fit-out of the 2nd floor, apartments Top 5 and Top 6, 26 tasks, 9 peopl
 
 Closing line: *"Nobody changed how they work. The schedule just stopped lying."*
 
-## Judging alignment (Talona)
+## Requirements it addresses
 
-| Talona "what wins" | KraftSync |
+| Requirement | KraftSync |
 |---|---|
 | Connect to what the site already uses | Lives in the Telegram group crews already use (n8n in between); plan imports are a stretch |
 | One live record of what changed and who decided | Append-only event log (`data/live/events.jsonl`); every change has a source message and actor |

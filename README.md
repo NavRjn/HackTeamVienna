@@ -1,26 +1,60 @@
 # KraftSync
 
-The site chat becomes a live construction schedule. Every "done", "late" or "we already started" message is checked against a dependency graph, and everyone whose work moves hears about it in minutes.
+[![CI](https://github.com/NavRjn/HackTeamVienna/actions/workflows/ci.yml/badge.svg)](https://github.com/NavRjn/HackTeamVienna/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-Building Better Worlds Hackathon, Vienna 2026 · Track 01 · Talona — *Context for the Physical World*.
+**A construction schedule that updates itself from the site chat.** Crews keep texting like they do today. KraftSync reads each message, maps it onto a dependency graph, works out what it breaks downstream, and tells *the people whose work is affected*.
 
-**Live dashboard:** **https://volunteers-router-transmit-clients.trycloudflare.com**. It shows the demo project's dependency graph, open discrepancies and event feed, and updates as site messages come in. It is served from the team laptop through a Cloudflare quick tunnel, so it is reachable only while the demo is running, and the address changes whenever the tunnel restarts.
+![KraftSync dashboard: dependency graph with the delay ripple and open discrepancies](docs/assets/dashboard.png)
 
-> **The one rule: AI interprets, the graph decides.** The LLM (inside n8n) only turns a chat message into a structured claim. Everything after that — dates, ripple, conflicts, who gets told — is deterministic, tested Python.
+- **What it does:** "plumbing will be a day late" becomes a graph update, a recomputed handover date, and a message to the inspector, the drywaller and the site manager. The plumber is not bothered.
+- **The one rule: AI interprets, the graph decides.** The LLM does one job, turning a message into a structured claim. Dates, ripple, conflict detection and routing are deterministic, unit-tested Python with no LLM call.
+- **Evidence:** 107 automated tests, including a replay of 10 gold-labelled site messages whose detected discrepancies all match the labels.
 
-## What it does, in one example
+Built in ~36 hours at the Building Better Worlds hackathon, Vienna, November 2026, then cleaned up as a portfolio project.
 
-Bathroom wall in Apartment 6. Plumber and electrician lay pipes and cables → the inspector checks them → the drywaller closes the wall → screed, paint, tiles → handover.
+## The problem
 
-| The plumber texts | Today | With KraftSync (within a minute) |
+A construction schedule is a dependency graph: pipes and cables, then inspection, then the wall is closed, then screed, paint, tiles, handover. On real sites:
+
+- The schedule lives in MS Project, Primavera or Excel, and is updated weekly at best.
+- Reality lives in WhatsApp or Telegram groups, phone calls and email.
+- Nobody connects the two. A plumber's "parts arrive Thursday" never reaches the drywaller who plans to close that wall on Wednesday, or the site manager whose handover date just moved.
+
+The cost is measurable: miscommunication and poor project data cause about 48% of rework on US jobsites (≈ $31.3 bn in 2018), and site teams spend about 35% of their time on non-productive work such as hunting for information and resolving conflicts (FMI / PlanGrid, *Construction Disconnected*, 2018). In the UK, avoidable errors are estimated at about 21% of project value (Get It Right Initiative).
+
+### What the challenge asked for
+
+The brief was to give the physical world context for software. We read it as four requirements:
+
+1. **Connect to what the site already uses.** No new app for crews.
+2. **Keep one live record** of what changed, who said so and who decided.
+3. **Flag issues as they happen**, not at the next weekly meeting.
+4. **Send decisions to the right person**, and only to them.
+
+### What is different here
+
+- **The schedule is a live graph, not a list.** A message about one task is evaluated by its effect on every task downstream, and on the project finish date.
+- **Messages become claims, never commands.** The LLM proposes ("task X, delayed, new finish Friday, confidence 0.93"); the graph decides whether and how to apply it.
+- **Detection compares state before and after.** It raises only what is *newly* wrong, so a repeated message does not repeat an alarm.
+- **Notification follows the graph.** The people told are those whose tasks move, within a configurable depth, plus the decision-maker, not the sender or the whole group.
+- **Event-sourced and auditable.** Current state is the untouched baseline plus a replay of an append-only event log. Every change traces back to a source message.
+- **Real plan formats in.** CSV, Excel, MS Project XML, Primavera P6 XER, and a reviewed LLM draft from PDF.
+
+## One example
+
+Bathroom wall in Apartment 6: the plumber and electrician lay pipes and cables, the inspector checks them (a hold point), the drywaller closes the wall, then screed, paint, tiles, handover.
+
+| Someone texts | Without KraftSync | With KraftSync (within a minute) |
 |---|---|---|
-| *"Parts missing, supplier says Thursday, then I need one more day"* | The drywaller's crew shows up Thursday and can't close the wall, or closes it anyway. | The **inspector** and the **drywaller** hear their new dates. The **site manager** hears *"handover moves +3 days, please decide"*. The plumber is not bothered. |
-| The drywaller texts *"Already started boarding the bathroom"* | The wall is closed before the inspection; it is torn open later. | **STOP** goes to the site manager and the inspector immediately: a hold point was violated. |
-| The electrician texts *"Client wants 2 more sockets"* | Nobody records who asked; the extra work goes unbilled. | Logged as a scope change and sent to the site manager to approve as a change order. |
+| Plumber: *"Parts missing, supplier says Thursday, then I need one more day"* | The drywaller turns up and cannot close the wall, or closes it anyway. | The **inspector** and **drywaller** get their new dates. The **site manager** hears *"handover moves +3 days, please decide"*. The plumber is not bothered. |
+| Drywaller: *"Already started boarding the bathroom"* | The wall is closed before inspection and torn open later. | **STOP** to the site manager and the inspector: a hold point was violated. |
+| Electrician: *"Client wants 2 more sockets"* | Nobody records who asked; the extra work goes unbilled. | Logged as a scope change and sent to the site manager as a change-order candidate. |
 
 ## Architecture
 
-Three blocks. Telegram is the only channel for now.
+Telegram → n8n Cloud (the LLM reads the message) → local FastAPI service (the graph checks it) → n8n → Telegram. n8n owns chat I/O and the single AI step. The service owns state, dates, detection and routing. They talk over an HTTPS tunnel with a shared token.
 
 ```mermaid
 flowchart LR
@@ -34,7 +68,7 @@ flowchart LR
         LLM --> UPD["HTTP: POST /updates"]
         NOTE["Notifier workflow<br/>outbox → (reword) → Telegram send<br/>→ report result"]
     end
-    subgraph LOCAL["Local service (FastAPI, our machine)"]
+    subgraph LOCAL["Local service (FastAPI)"]
         direction TB
         CTXH["/context<br/>who is this + candidate tasks"]
         UPDH["/updates<br/>apply → check → resolve"]
@@ -50,28 +84,16 @@ flowchart LR
     NOTE -. "GET /actions, POST /actions/result" .-> OUTBOX
     CTX -. "HTTPS tunnel + token" .-> CTXH
     UPD -. "HTTPS tunnel + token" .-> UPDH
-    UI["UI (GET /state, /events)"] --> STATE
+    UI["Dashboard (GET /state, /events)"] --> STATE
 ```
 
 | Block | Does | Does **not** |
 |---|---|---|
 | Channel | Where people already talk | — |
-| n8n | Receives messages, asks the local service for context, runs the one LLM step, sends the messages we tell it to | decide anything about the schedule |
-| Local service | Sender lookup, candidate shortlist, graph state, conflict detection, who-gets-told rules, event log | call an LLM |
+| n8n | Receives messages, asks the service for context, runs the one LLM step, sends the messages it is told to send | decide anything about the schedule |
+| Local service | Sender lookup, candidate shortlist, graph state, forecast dates, conflict detection, who-gets-told rules, event log | call an LLM |
 
-## Where the data lives
-
-| | Static baseline | Live (dynamic) |
-|---|---|---|
-| Where | `data/demo/` (`plan.json`, `persons.csv`, CSVs, gold messages) | `data/live/` (`LIVE_DIR`) |
-| Committed to git | yes (generated by `scripts/generate_demo_plan.py`) | **no** (gitignored) |
-| Written by | the generator script and people | only the service |
-| Contents | the plan as it was before anything happened | `events.jsonl` (append-only truth, incl. the action outbox), `graph.json` (derived snapshot of the current graph, same body as `GET /state`, rewritten after every change), `kraftsync.log` (call log) |
-
-State on start = baseline + replay of `data/live/events.jsonl`. `POST /reset` empties the live events and returns to the baseline;
-the baseline is never modified. `graph.json` is only a readable copy for the UI/teammates: delete it and it is rebuilt.
-
-## How one message flows (demo message 02)
+### How one message flows
 
 ```mermaid
 sequenceDiagram
@@ -93,112 +115,57 @@ sequenceDiagram
     N->>API: POST /updates {sender_id, text, updates}
     Note over API: apply to graph, recompute dates, check, decide who is told
     API-->>N: delay +3d, 10 tasks shift, handover 12-06 to 12-09, 3 actions drafted
-    Note over API: files updated: data/live/events.jsonl, graph.json. Actions are in the outbox
     API->>NT: webhook push (or the notifier polls GET /actions)
     NT->>TG: send each action's text to its recipient
     NT->>API: POST /actions/result {action_id, sent}
     TG->>D: inspector + drywaller: FYI new dates. Site manager: decision needed
 ```
 
-### The two calls, step by step
+The real response for this message:
 
-**1. `POST /context`: "who is this, and what could they be talking about?"**
-
-```json
-// request
-{ "sender_id": 123456789, "received_at": "2026-11-09T08:15:00+01:00",
-  "text": "Top 6 Sanitär wird diese Woche nicht fertig ..." }
-// response (shortened)
-{
-  "person": { "id": "P-SAN", "name": "Emre Yılmaz", "role": "foreman", "trade": "plumbing", "language": "de" },
-  "tasks": [ { "id": "T6-PLUMB-RI", "name": "T6 Sanitär Rohinstallation + Vorwand", "status": "in_progress",
-               "planned_finish": "2026-11-10" } ],
-  "related_tasks": [ { "id": "T6-INSP", "name": "T6 Abnahme Installationen (vor Beplankung)", "responsible_person_id": "P-INS" },
-                     "... other people's tasks that may be meant ..." ],
-  "today": "2026-11-09"
-}
-```
-Two lists, at most 15 each, kept apart on purpose:
-- `tasks`: the sender's **own** tasks (assigned to them or their trade) that are active within **±3 days** of today: in progress, overlapping the window, overdue and still open, or just finished.
-- `related_tasks`: **other people's** tasks that may be what the message is about: tasks at locations named in the text ("Top 6", "Bad Top 6"), direct predecessors/successors of the sender's tasks, other tasks active now.
-
-The LLM may only choose a `task_id` from these two lists (or null) and should prefer `tasks`.
-
-The sender is identified by their **Telegram user id** (`message.from.id`), matched to `telegram_chat_id` in the plan. An unknown id gets empty lists. "Today" is the message date (`received_at`), unless `DEMO_TODAY` is set, which always wins.
-
-**2. n8n's LLM node produces one `TaskUpdate` per claim.** This is the data format between n8n and the service: a JSON object that is one *claim about one task*. One chat message can carry several claims ("plumbing done, tiling will be late"). It is the `TaskUpdate` model in `kraftsync/contracts/models.py`.
-
-| Field | Filled by | Example |
-|---|---|---|
-| `message_id` | n8n, unique **per claim**: Telegram chat id + message id + `#n`; idempotency key | `"tg:-100123:456#1"` |
-| `task_id` | LLM, from `tasks` / `related_tasks` only (prefer `tasks`), or `null` | `"T6-PLUMB-RI"` |
-| `kind` | LLM | `started` · `progress` · `completed` · `delayed` · `blocked` · `unblocked` · `modified` · `question` · `irrelevant` |
-| `confidence` | LLM (0–1) | `0.93` |
-| `new_forecast_finish` | LLM, resolves "Donnerstag + 1 Tag" using `today` | `"2026-11-13"` |
-| `blocker`, `change_description`, `percent_complete` | LLM, when relevant | `"pre-wall elements not delivered"` |
-| `rationale` | LLM, one short sentence (shown to the manager) | `"supplier Thursday, +1 day"` |
-| `reported_on`, `model` | n8n | `"2026-11-09"`, `"n8n-claude-v1"` |
-
-**3. `POST /updates`: "apply this claim, tell me what it breaks."**
-
-```json
-{ "sender_id": 123456789, "text": "<original message>", "received_at": "2026-11-09T08:15:00+01:00",
-  "updates": [ { "message_id": "demo:02", "task_id": "T6-PLUMB-RI", "kind": "delayed", "confidence": 0.93,
-              "reported_on": "2026-11-09", "new_forecast_finish": "2026-11-13",
-              "blocker": "pre-wall elements not delivered", "rationale": "supplier Thursday, +1 day", "model": "n8n-claude" } ] }
-```
-The response (real output for this message):
 ```
 status: applied
 discrepancies: delay, critical: "T6 Sanitär Rohinstallation + Vorwand: finish 2026-11-10 -> 2026-11-13 (+3d);
                 10 downstream task(s) shift; project finish 2026-12-06 -> 2026-12-09"
 actions:
-  P-INS  notify    "Info: T6 Abnahme Installationen ... verschiebt sich von 2026-11-11 auf 2026-11-14. Grund: ..."
-  P-DRY  notify    "Info: T6 Beplankung + Dämmung verschiebt sich von 2026-11-12 auf 2026-11-15. Grund: ..."
+  P-INS  notify    "Info: T6 Abnahme Installationen ... verschiebt sich von 2026-11-11 auf 2026-11-14. ..."
+  P-DRY  notify    "Info: T6 Beplankung + Dämmung verschiebt sich von 2026-11-12 auf 2026-11-15. ..."
   P-SM   escalate  "Termin 'Übergabe 2. OG' verschiebt sich 2026-12-06 → 2026-12-09 (+3 Tage). ... Bitte entscheiden."
-recipients: { person_id → name + telegram_chat_id }   // so n8n can send without a second lookup
-```
-`actions` and `recipients` are merged over all claims (per-claim detail is in `results`). Every action is also stored in the outbox (`GET /actions`); the notifier workflow in n8n sends `text` to `recipients[to_person_id].telegram_chat_id` and reports back with `POST /actions/result` (`sent` / `failed`). Statuses (per claim; the top-level one is the most "applied" of them): `needs_clarification` (low confidence: one `ask` action to the sender, nothing applied), `ignored` (chit-chat, questions, unknown sender), `duplicate` (same `message_id` again: safe to retry).
-
-Full contract and all routes: [`docs/api.md`](docs/api.md).
-
-## What happens inside `/updates`
-
-```mermaid
-flowchart TD
-    A["POST /updates"] --> B{"message_id already seen?"}
-    B -- yes --> DUP["duplicate: do nothing"]
-    B -- no --> C{"task_id real and date plausible?"}
-    C -- no --> R["422 reject"]
-    C -- yes --> E["log message + update_interpreted"]
-    E --> F{"irrelevant / question / unknown sender?"}
-    F -- yes --> IGN["ignored"]
-    F -- no --> G{"task_id null or confidence below minimum?"}
-    G -- yes --> ASK["needs_clarification: ask the sender"]
-    G -- no --> H["apply to graph (task_changed event)"]
-    H --> I["check: state before vs after"]
-    I --> J["resolve: who is told what"]
-    J --> K["response with actions<br/>+ optional n8n webhook"]
 ```
 
-### How anomalies are decided
+The full HTTP contract is in [`docs/api.md`](docs/api.md).
 
-Detection compares the **state before** and **after** the claim was applied. It raises only what is **newly** wrong, so repeating a message does not repeat an alarm.
+## Guardrails: how the LLM is kept honest
 
-| Check | Rule (deterministic) | Raised as | Severity | Built |
-|---|---|---|---|---|
-| Sequence | task started or completed while a predecessor is still open | `out_of_sequence` | warning | yes |
-| Hold point | same, and the open predecessor is a hold point (inspection) | `hold_point_violation` | critical | yes |
-| Schedule | forecast finish passes the planned finish; the ripple (affected downstream tasks, project finish before/after) comes from recomputing the schedule before and after | `delay` | critical if the project finish moves, else warning | yes |
-| Scope | update kind `modified` | `scope_change` | warning | yes |
-| Blocked | update kind `blocked` | `blocked` | warning | yes |
-| Contradiction | claim contradicts state (e.g. "started" on a done task, two conflicting reports) | `conflicting_reports` | warning | planned |
-| Silence | task overdue and nobody reported | `silent_overdue` | info → warning | planned (timer) |
-| Unknown work | message about work not in the graph | `unknown_task` | info | planned |
+The LLM is the only non-deterministic component, so it is confined structurally rather than by prompt alone.
 
-Who is told ([`kraftsync/policy/policy.yaml`](kraftsync/policy/policy.yaml) texts, rules in `kraftsync/engine/resolve.py`): people whose tasks move within 2 steps downstream get an FYI; the site manager gets decisions (project finish moves, hold point, scope change, blocked); the sender is only asked to clarify; one message per person per event, the most urgent wins.
+| What could go wrong | What stops it |
+|---|---|
+| The model invents a task or person id | It may only choose from the `tasks` / `related_tasks` shortlist that `/context` returns; the service rejects unknown ids (422). |
+| The model is unsure or the message is ambiguous | A claim below `CONFIDENCE_MIN` or without a task is **never applied**; the service asks the sender instead. |
+| The model does date arithmetic wrong | It copies dates from a calendar table or returns "days left"; code turns that into `today + n`. |
+| The model decides what counts as a conflict | It sends *claims*, not graph fragments. The graph compares before and after and decides. |
+| A webhook is retried and applied twice | Every claim carries a `message_id`; repeats return `duplicate` and change nothing. |
+| State is silently corrupted | Append-only event log; state = baseline + replay; `graph.json` is only a derived copy. |
+| The model is swapped or changes | The Python service has no LLM call and runs in tests with the gold labels as claims, so the deterministic half stays verified. |
 
-## The demo graph (Top 6)
+## How anomalies are decided
+
+Detection compares the state **before** and **after** a claim is applied and raises only what is newly wrong.
+
+| Check | Rule (deterministic) | Raised as | Severity |
+|---|---|---|---|
+| Sequence | Task started or completed while a predecessor is still open | `out_of_sequence` | warning |
+| Hold point | Same, and the open predecessor is an inspection hold point | `hold_point_violation` | critical |
+| Schedule | Forecast finish passes planned finish; ripple (downstream tasks, project finish before/after) from recomputing the schedule (CPM forward pass) | `delay` | critical if the project finish moves, else warning |
+| Scope | Update kind `modified` | `scope_change` | warning |
+| Blocked | Update kind `blocked` | `blocked` | warning |
+
+Routing ([`policy.yaml`](kraftsync/policy/policy.yaml), [`resolve.py`](kraftsync/engine/resolve.py)): people whose tasks move within 2 steps downstream get an FYI; the site manager gets decisions (project finish moves, hold point, scope change, blocked); the sender is only ever asked to clarify; one message per person per event, the most urgent wins.
+
+## The demo graph
+
+26 tasks, 38 dependencies, 9 people and 10 gold-labelled German messages, all synthetic, in `data/demo/`.
 
 ```mermaid
 flowchart LR
@@ -228,101 +195,49 @@ flowchart LR
     class INSP hold
     class BOARD,SCREED,PAINT,WP,FLOOR,EFF,TILE,SFF,HO ripple
 ```
-Orange: the plumber's delay (message 02). Yellow: tasks that shift, so the handover moves 12-06 → 12-09. Red: the hold point the drywaller violates in message 05. Demo data: 26 tasks, 38 dependencies, 9 people, 10 gold-labelled German messages in `data/demo/`.
 
-## Who owns what
+Orange: the plumber's delay. Yellow: tasks that shift, so the handover moves 12-06 → 12-09. Red: the hold point the drywaller violates.
 
-One directory per person; only edit your own. The interfaces between them are fixed (`docs/api.md`, `kraftsync/contracts/models.py`) and everyone can work against fixtures until integration.
+## Results
 
-```mermaid
-flowchart LR
-    subgraph A["A · n8n workflow"]
-        A1["n8n/ (exported workflow, prompt)"]
-    end
-    subgraph B["B · Detection engine"]
-        B1["kraftsync/engine/<br/>resolve.py"]
-        B2["kraftsync/policy/policy.yaml"]
-    end
-    subgraph C["C · Graph + schema"]
-        C1["kraftsync/contracts/models.py"]
-        C2["kraftsync/graph/ (single point of control)"]
-        C3["data/demo/"]
-    end
-    subgraph D["D · UI, deploy, demo"]
-        D1["UI (reads /state, /events)"]
-        D2["tunnel, demo group, video, README"]
-    end
-    A1 -- "HTTP: docs/api.md" --> API["kraftsync/app/<br/>api.py (frozen contract)"]
-    API --> B1
-    API --> C2
-    B1 -- "contract models" --- C1
-    C2 -- "contract models" --- C1
-    D1 -- "GET /state, /events" --> API
-```
-| Owner | Scope | Hands over |
-|---|---|---|
-| A · n8n | Telegram trigger → `/context` → LLM node → `/updates` → send actions | The workflow JSON and the prompt |
-| B · Detection | `check()` and `resolve_all()`: more rules (contradictions, silent overdue), better texts | Rules with tests on the gold messages |
-| C · Graph + schema | Contract models, graph state/replay (`kraftsync/graph`, the single point of control), demo data | Models stay additive; breaking changes announced, because n8n's schema depends on them |
-| D · UI + deploy | Graph view with the handover date, event feed, tunnel, demo Telegram group, 3-min video | A page that only needs `GET /state` and `GET /events` |
+| Metric | Value |
+|---|---|
+| Automated tests | 107 pass, 1 skipped (Python), plus frontend unit tests |
+| Detected discrepancies vs gold labels | 10 / 10 messages match on replay |
+| Plan import formats | CSV, Excel, MS Project XML, Primavera P6 XER, PDF (reviewed draft) |
+| LLM task-mapping accuracy, wrong-and-confident rate | Not yet measured (planned: n8n manual-trigger evaluation against the gold labels) |
 
-## Plan to code freeze
+## Team
 
-```mermaid
-gantt
-    title Friday evening to code freeze (approximate)
-    dateFormat YYYY-MM-DD HH:mm
-    axisFormat %a %H:%M
-    section Done
-    Local API, detection v0, tests, tunnel :done, d1, 2026-11-13 19:00, 2h
-    section Fri night
-    n8n flow end to end on message 02 :active, a1, 2026-11-13 21:00, 90m
-    Telegram demo group + real chat ids :a2, 2026-11-13 21:00, 90m
-    UI against /state and /events :a3, 2026-11-13 21:30, 3h
-    section Sat morning
-    Detection: contradictions, silent overdue :b1, 2026-11-14 08:00, 2h
-    n8n and Adaption workshops :milestone, w1, 2026-11-14 11:00, 0m
-    Rehearse full demo, reset between runs :c1, 2026-11-14 10:00, 2h
-    Record 3-min video :crit, v1, 2026-11-14 12:30, 1h
-    section Submission
-    README, licence check, submit form :s1, 2026-11-14 13:30, 90m
-    Code freeze :crit, milestone, f1, 2026-11-14 15:00, 0m
-```
+Four people, four independent modules, joined by two frozen contracts ([`docs/api.md`](docs/api.md) and [`kraftsync/contracts/models.py`](kraftsync/contracts/models.py)).
 
-## Hackathon analysis
+### [@Aizhanaaah](https://github.com/Aizhanaaah) · Data and plan ingestion
+- Built the synthetic project: a 26-task, 38-dependency, 9-person fit-out with locations, job titles and hold points.
+- Wrote the importers that turn real schedule files into a validated plan: CSV, Excel, MS Project XML and Primavera P6 XER.
+- Built the PDF path: an LLM draft of a plan that a human reviews and freezes, at plan time only.
+- Wrote the validation and source-consistency tests, plus the generators and the tunnel helper.
+- *Lives in:* `kraftsync/ingestion/`, `scripts/`, `data/demo/`
 
-**Differentiation.** The track asks to catch a problem on site early enough for someone to act. Our guess at what other teams will build is below; it is a judgement, not data.
+### [@GodZChild](https://github.com/GodZChild) · Telegram integration and dashboard
+- Created and configured the Telegram bot and demo group (BotFather, privacy mode, sender-id mapping).
+- Built the dashboard: a zoomable SVG dependency graph in location lanes, with open issues outlined.
+- Added the issue-to-impact view, the live activity feed, and a project-document and BIM (IFC) viewer.
+- Wrote the Node proxy that keeps the API token server-side, plus the frontend tests.
+- *Lives in:* `frontend/`
 
-```mermaid
-quadrantChart
-    title Our guess: how distinctive vs how demo-ready
-    x-axis Hard to demo --> Easy to demo
-    y-axis Common idea --> Distinctive idea
-    quadrant-1 Win zone
-    quadrant-2 Risky bets
-    quadrant-3 Crowded
-    quadrant-4 Safe but forgettable
-    Chat summariser: [0.85, 0.15]
-    Dashboard over the plan: [0.75, 0.25]
-    Stale drawing checker: [0.45, 0.55]
-    n8n plus LLM flags issues: [0.7, 0.3]
-    KraftSync: [0.65, 0.8]
-```
-- **What sets us apart:** a message reaches the people downstream of it, not just the sender; the hold-point catch is deterministic and explainable (it is the example on Talona's own slide); crews change nothing about how they work.
-- **Risks:** n8n plus an LLM alone looks generic, so the ripple (handover date moving) must be visible on stage; live Telegram and Wi-Fi can fail (manual message box and replay are the fallback); the data is synthetic; detection is only as good as the dependencies in the plan.
+### [@datenberg](https://github.com/datenberg) · n8n workflows and integration
+- Built the intake workflow: Telegram trigger, context lookup, structured-output LLM step, and the request to the service.
+- Built the notifier workflow: outbox to Telegram delivery, with delivery results reported back.
+- Designed the prompt and its guards so a small model copies dates from a calendar table instead of computing them.
+- Wired every integration end to end and ran the product testing across the full chain.
+- *Lives in:* `n8n/`, [`docs/n8n-workflow.md`](docs/n8n-workflow.md)
 
-**Economics.** The Talona brief cites ~$1.85 tn lost to bad data and miscommunication in 2020. `docs/00-overview` also cites FMI/PlanGrid figures (≈48% of rework from miscommunication, ≈35% of site time non-productive); **verify these before using them in the pitch**. Where the value comes from, per site:
-
-| Lever | Value | What we must validate with a mentor |
-|---|---|---|
-| Hold-point catches | rework avoided (open wall, re-inspect) | cost of one tear-out |
-| Downstream warnings | idle crew-days avoided | day rate × days lost per late delivery |
-| Scope changes captured | change orders that would have gone unbilled | share of extras never invoiced |
-| Fewer coordination calls | site-manager time | hours per week |
-
-Adoption cost is near zero (no new app for crews), which is what usually kills construction tools.
-
-**Engineering quality.** The LLM is confined to one step and can only choose from a candidate list; low confidence asks instead of guessing; every change is an append-only event; detection is pure functions with a replay test against the 10 gold messages; API is token-protected and idempotent. Weak spots: calendar days only, finish-to-start and start-to-start dependencies only, one project, no accuracy numbers for the LLM step yet.
+### [@NavRjn](https://github.com/NavRjn) · Architecture and core engine
+- Designed the overall architecture and the determinism rule, and froze the contracts between the modules.
+- Built the dependency graph: CPM forecast and ripple, event-sourced state and the audit log.
+- Built the discrepancy detection and the resolution policy that decides who is told what.
+- Built the FastAPI service (token, idempotency, outbox), the test suite with the gold-message replay, and the data-quality checks.
+- *Lives in:* `kraftsync/graph/`, `engine/`, `policy/`, `app/`, `contracts/`, `tests/`
 
 ## Quickstart
 
@@ -332,50 +247,64 @@ uv sync
 uv run pytest -q
 uv run python -m kraftsync.app.serve
 ```
-The first start generates `KRAFTSYNC_TOKEN` and a random `KRAFTSYNC_PORT` into `.env` and prints the URL and the token header. Share the token privately; it is the only lock, and it is sent over plain HTTP on the LAN.
 
-For n8n Cloud, expose the local port with a tunnel:
+The first start generates `KRAFTSYNC_TOKEN` and a random `KRAFTSYNC_PORT` into `.env`. For the dashboard:
+
 ```bash
-cloudflared tunnel --url http://127.0.0.1:<KRAFTSYNC_PORT>     # prints https://<random>.trycloudflare.com
+npm --prefix frontend ci && npm --prefix frontend start   # http://127.0.0.1:5173
 ```
-In n8n, call `<that URL>/context` and `<that URL>/updates` with the header `X-KraftSync-Token`. The URL changes whenever the tunnel restarts.
+
+For n8n Cloud, expose the service with `uv run python scripts/tunnel.py` (starts cloudflared and prints the HTTPS base URL). n8n calls `/context` and `/updates` with the header `X-KraftSync-Token`. The workflow export goes in `n8n/`; see [`docs/n8n-workflow.md`](docs/n8n-workflow.md) for how it is built.
 
 | Variable | Meaning |
 |---|---|
 | `KRAFTSYNC_TOKEN` | Shared secret, at least 24 characters (generated on first run) |
-| `KRAFTSYNC_HOST` / `KRAFTSYNC_PORT` | Bind address (default all interfaces) and port (random, saved) |
+| `KRAFTSYNC_HOST` / `KRAFTSYNC_PORT` | Bind address and port (random, saved) |
 | `DEMO_TODAY` | Freeze "today" for the demo story (`2026-11-09`) |
-| `DEMO_REDIRECT_CHAT_ID` | Stage mode: every message goes to this one chat, prefixed with the real recipient |
-| `N8N_CONFLICT_WEBHOOK_URL`, `N8N_HOOK_TOKEN` | Optional: we also call this n8n webhook when there is a conflict |
+| `DEMO_REDIRECT_CHAT_ID` | Demo mode: every message goes to one chat, prefixed with the real recipient |
+| `N8N_CONFLICT_WEBHOOK_URL`, `N8N_HOOK_TOKEN` | Optional push to the notifier workflow |
 | `CONFIDENCE_MIN` | Below this the sender is asked instead (default 0.7) |
+
+## Repository layout
+
+```
+kraftsync/
+  contracts/    Pydantic domain models shared by all modules
+  graph/        ProjectGraph: state, CPM schedule, apply, detect, context shortlist; EventStore
+  engine/       resolve.py: who gets told what (deterministic)
+  policy/       policy.yaml: message templates (de/en) and notify depth
+  app/          FastAPI service (routes, HTTP envelopes, settings, serve entry point)
+  ingestion/    CSV / Excel / MSPDI / XER / PDF  ->  ProjectPlan
+frontend/       dashboard (Node proxy + SVG graph)
+n8n/            LLM output schema and Code-node scripts for the workflows
+data/demo/      synthetic project and gold-labelled messages (live state goes to data/live/, gitignored)
+tests/          pytest, including the gold-message replay through the API
+docs/           one folder per module, plus api.md and n8n-workflow.md
+```
+
+## Limitations and roadmap
+
+- Calendar days only (no working calendars); finish-to-start and start-to-start dependencies only; one project at a time.
+- Data is synthetic; detection is only as good as the dependencies in the imported plan.
+- LLM interpretation accuracy is not yet measured.
+- Planned checks: contradicting reports, silent overdue tasks (timer), work not in the graph.
+- Planned channels: WhatsApp and email, through n8n.
 
 ## Docs
 
 | Folder | Content |
 |---|---|
-| `docs/api.md` | The HTTP contract between n8n and the local service |
-| `docs/n8n-workflow.md` | The n8n workflow, node by node (for the n8n owner) |
-| `docs/00-overview` | Problem, product, demo story; `open-questions.md` lists what still needs a decision |
-| `docs/01-architecture` | Three blocks, data flow, determinism rule, contracts, interfaces |
-| `docs/02-ingestion` | Plan import (stretch, not built) |
-| `docs/03-integrations` | Channels: Telegram via n8n |
-| `docs/04-graph` | Forecast, discrepancy rules, events (what is built vs planned) |
-| `docs/05-engine` | Interpretation (n8n LLM node) and the `/updates` pipeline, evaluation plan |
-| `docs/06-resolution-policy` | Who gets told what |
-| `docs/07-deployment-demo` | Running the service, tunnel, security, UI, demo checklist, submission |
+| [`docs/api.md`](docs/api.md) | HTTP contract between n8n and the service |
+| [`docs/n8n-workflow.md`](docs/n8n-workflow.md) | The n8n workflows, node by node |
+| [`docs/00-overview`](docs/00-overview) | Problem, product, demo story |
+| [`docs/01-architecture`](docs/01-architecture) | Data flow, determinism rule, contracts |
+| [`docs/02-ingestion`](docs/02-ingestion) | Plan import |
+| [`docs/03-integrations`](docs/03-integrations) | Channels (Telegram via n8n) |
+| [`docs/04-graph`](docs/04-graph) | Forecast, discrepancy rules, events |
+| [`docs/05-engine`](docs/05-engine) | Interpretation and the `/updates` pipeline |
+| [`docs/06-resolution-policy`](docs/06-resolution-policy) | Who gets told what |
+| [`docs/07-deployment-demo`](docs/07-deployment-demo) | Running, tunnel, security, demo |
 
-## Results
+## License
 
-| Metric | Value |
-|---|---|
-| Unit/API tests | 28 passing (includes a replay of all 10 gold demo messages) |
-| Detected discrepancies vs gold labels | 10 / 10 messages match |
-| LLM task mapping accuracy, update-kind accuracy, wrong-and-confident rate | TBD (n8n LLM step not measured yet) |
-| Message → notification latency | TBD |
-
-## Assumptions
-
-- Demo project and chat messages are synthetic (`data/demo/`), generated to be schedule-consistent.
-- Calendar days, no working calendars.
-- Each demo person's Telegram user id goes into the `telegram_chat_id` column of `data/demo/persons.csv` (restart the service or `POST /reset` afterwards). Without it the person is an unknown sender and their messages are ignored; the startup log lists who is missing.
-- Licence: the repo carries an MIT `LICENSE`, but the Talona slide says Talona work goes to a private repository. Confirm with the organisers before submitting.
+[MIT](LICENSE)

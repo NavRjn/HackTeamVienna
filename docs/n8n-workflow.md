@@ -82,7 +82,7 @@ What the people receive for the demo messages is listed below. Nothing in n8n de
   `[an <name>]`. No per-person Telegram ids needed.
 - Add a second **Manual Trigger** path that feeds the 10 messages of `data/demo/messages.jsonl` into step 2 (set `sender_id`
   from the persons list). That exercises the real LLM node and lets you compare `kind` and `task_id` with the gold labels
-  (this is where the accuracy numbers for the pitch come from).
+  (this is where the LLM accuracy numbers come from).
 - `POST /reset` between rehearsals.
 
 ## Later (not needed for the skeleton)
