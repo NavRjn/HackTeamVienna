@@ -1,7 +1,6 @@
 # CLAUDE.md — KraftSync
 
-Hackathon project · Building Better Worlds, Vienna · Track 01 / Talona "Context for the Physical World".
-**Code freeze: Sat 14 Nov 2026, 15:00.** Optimise for a working end-to-end demo. Cut scope before cutting quality.
+Portfolio project: a construction schedule as a live dependency graph, fed by the site chat. Optimise for a working end-to-end demo; cut scope before cutting quality.
 
 ## What KraftSync is
 

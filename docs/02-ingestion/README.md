@@ -1,6 +1,6 @@
 # 02 · Ingestion
 
-**Status: not built.** The local service loads `PLAN_PATH` (default `data/demo/plan.json`) directly with `ProjectPlan.model_validate_json`; the demo does not depend on this package. `tests/test_contracts.py` already checks the demo plan (unique ids, known references, acyclic). Everything below is the plan for the stretch import.
+**Status: built.** CSV, Excel, MS Project XML, P6 XER importers and the PDF draft path live in `kraftsync/ingestion/` with tests (`tests/test_ingestion.py`, `test_sources.py`, `test_pdf.py`). The live service still loads `PLAN_PATH` (default `data/demo/plan.json`) directly, so the demo does not depend on ingestion. The sections below are the original design.
 
 Goal: anything a real project already has → a valid `ProjectPlan`.
 

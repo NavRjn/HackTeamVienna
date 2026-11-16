@@ -1,4 +1,4 @@
-# Local service API (v0, frozen for the hackathon)
+# Local service API (v0, frozen)
 
 n8n ⇄ local service. n8n does the chat I/O and the single AI step; this service does everything deterministic
 (sender lookup, candidate shortlist, graph state, conflict detection, who-gets-told). Models are in

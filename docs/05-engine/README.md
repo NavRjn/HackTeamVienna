@@ -33,7 +33,7 @@ Rejected before any of this with `422`: a `task_id` that is not in the plan, a `
 Built: low confidence or no task → one `ask` action to the sender ("Welche Aufgabe meinst du? …"), nothing applied.
 Not built: linking the sender's **reply** to that question and re-running the claim. Until then the reply is interpreted as a new message.
 
-## Evaluation (the number we show judges)
+## Evaluation (the headline number)
 
 There are two layers:
 1. **Deterministic layer — done.** `tests/test_api.py::test_demo_replay_matches_gold` feeds the 10 gold messages (as perfect claims) through the API and requires exactly the expected discrepancy types. This proves detection, not the LLM.

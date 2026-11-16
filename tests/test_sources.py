@@ -11,6 +11,7 @@ import csv
 import importlib.util
 import io
 import re
+import zipfile
 from datetime import date
 from pathlib import Path
 
@@ -35,6 +36,11 @@ def plan() -> ProjectPlan:
     return ProjectPlan.model_validate_json((ROOT / "data" / "demo" / "plan.json").read_text(encoding="utf-8"))
 
 
+def _unzipped(data: bytes) -> dict:
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        return {n: z.read(n) for n in z.namelist()}
+
+
 def test_sources_are_up_to_date_with_plan(gen, tmp_path, capsys):
     gen.main(tmp_path)
     capsys.readouterr()
@@ -42,6 +48,8 @@ def test_sources_are_up_to_date_with_plan(gen, tmp_path, capsys):
         fresh, committed = (tmp_path / name).read_bytes(), (SOURCES / name).read_bytes()
         if name.endswith((".csv", ".xml", ".xer")):
             fresh, committed = fresh.replace(b"\r\n", b"\n"), committed.replace(b"\r\n", b"\n")
+        if name.endswith(".xlsx"):   # a zip: compare the unpacked parts, compressed bytes vary with the zlib build
+            fresh, committed = _unzipped(fresh), _unzipped(committed)
         assert fresh == committed, (f"data/demo/sources/{name} is out of date with plan.json. "
                                     "Run: uv run python scripts/generate_demo_sources.py")
 
