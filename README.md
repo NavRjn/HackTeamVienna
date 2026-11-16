@@ -1,6 +1,6 @@
 # KraftSync
 
-[![CI](https://github.com/NavRjn/HackTeamVienna/actions/workflows/ci.yml/badge.svg)](https://github.com/NavRjn/HackTeamVienna/actions/workflows/ci.yml)
+[![CI](https://github.com/NavRjn/KraftSync/actions/workflows/ci.yml/badge.svg)](https://github.com/NavRjn/KraftSync/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
